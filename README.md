@@ -10,6 +10,10 @@ Postgres/Docker, реальные платежи) в этот пакет не в
 
 > Замените `OWNER` в бейдже на имя владельца после публикации на GitHub.
 
+> **Подробная пошаговая инструкция по использованию (установка, примеры кода,
+> чтение результатов, подключение реальных данных, частые проблемы) — в
+> [USAGE.md](USAGE.md).**
+
 ## Возможности
 
 - **Мультиспорт**: футбол (Poisson/Dixon-Coles), баскетбол (Normal margin/total),
@@ -43,6 +47,7 @@ pip install -e ".[dev]"
 ```
 bukmeker/
   pyproject.toml    — сборка (setuptools), entry point `bukmeker`, extras [connectors, dev]
+  USAGE.md           — пошаговая инструкция по использованию
   .github/workflows/ci.yml — CI: ruff + pytest на Python 3.11 и 3.12
   bukmeker/
     features.py       — экспоненциальное затухание, EMA, взвешенное скользящее среднее
