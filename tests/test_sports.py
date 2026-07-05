@@ -25,6 +25,16 @@ def test_basketball_moneyline_rejects_nonpositive_sigma():
         predict_moneyline(mu_margin=1.0, sigma_margin=0.0)
 
 
+def test_basketball_spread_cover_rejects_nonpositive_sigma():
+    with pytest.raises(ValueError):
+        predict_spread_cover(mu_margin=1.0, sigma_margin=0.0, spread=-5.5)
+
+
+def test_basketball_total_rejects_nonpositive_sigma():
+    with pytest.raises(ValueError):
+        predict_total(mu_total=220.0, sigma_total=0.0, line=225.5)
+
+
 def test_basketball_spread_cover_at_zero_matches_moneyline():
     ml = predict_moneyline(mu_margin=4.0, sigma_margin=12.0)
     cover = predict_spread_cover(mu_margin=4.0, sigma_margin=12.0, spread=0.0)
@@ -64,6 +74,18 @@ def test_tennis_predict_match_win_prob_best_of_5_higher_favours_stronger_player(
 def test_tennis_rejects_even_best_of():
     with pytest.raises(ValueError):
         predict_match_win_prob(p_set=0.5, best_of=4)
+
+
+def test_race_to_win_prob_rejects_p_outside_unit_interval():
+    with pytest.raises(ValueError):
+        race_to_win_prob(1.5, wins_needed=2)
+    with pytest.raises(ValueError):
+        race_to_win_prob(-0.1, wins_needed=2)
+
+
+def test_race_to_win_prob_rejects_nonpositive_wins_needed():
+    with pytest.raises(ValueError):
+        race_to_win_prob(0.6, wins_needed=0)
 
 
 def test_tennis_fifty_fifty_set_prob_gives_fifty_fifty_match_prob():

@@ -66,25 +66,30 @@ def find_record_list(raw, min_len: int = 1) -> list[dict]:
     """Heuristically locate the list of match-like records inside an arbitrary
     provider JSON payload. Many APIs wrap arrays under keys like "response",
     "data", "matches", "results" — this does a breadth-first search for the
-    first list of dicts, so it works without knowing the provider in advance."""
-    if isinstance(raw, list):
-        return raw if raw and all(isinstance(x, dict) for x in raw) else []
-    if not isinstance(raw, dict):
+    first list of dicts, so it works without knowing the provider in advance.
+    The candidate list can be nested inside a dict's value OR inside another
+    list's items (e.g. a payload shaped like `[metadata, [...records]]`) --
+    both are checked uniformly rather than only dict values."""
+
+    def is_record_list(value) -> bool:
+        return isinstance(value, list) and len(value) >= min_len and all(
+            isinstance(x, dict) for x in value
+        )
+
+    if is_record_list(raw):
+        return raw
+    if not isinstance(raw, (dict, list)):
         return []
 
     queue: list = [raw]
     while queue:
         node = queue.pop(0)
-        if isinstance(node, dict):
-            for value in node.values():
-                if isinstance(value, list) and len(value) >= min_len and all(
-                    isinstance(x, dict) for x in value
-                ):
-                    return value
-                if isinstance(value, (dict, list)):
-                    queue.append(value)
-        elif isinstance(node, list):
-            queue.extend(item for item in node if isinstance(item, (dict, list)))
+        children = node.values() if isinstance(node, dict) else node
+        for value in children:
+            if is_record_list(value):
+                return value
+            if isinstance(value, (dict, list)):
+                queue.append(value)
     return []
 
 

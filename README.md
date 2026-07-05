@@ -81,7 +81,7 @@ bukmeker/
       sync.py                — sync_registry_from_matches: слияние live-данных в реестр
     dashboard.py        — Streamlit-дашборд (все вкладки: спорт/купон/сущности)
     cli.py             — `bukmeker demo`, `bukmeker connector [--sync]`, `bukmeker dashboard`
-  tests/               — 152 unit-тестов; сетевые/AI-вызовы и дашборд протестированы
+  tests/               — 166 unit-тестов; сетевые/AI-вызовы и дашборд протестированы
                           через инжектируемые фейки и headless AppTest, без реальных
                           запросов, трат или браузера
   demo.py              — тонкая обёртка над bukmeker.cli.main(["demo"])
@@ -91,7 +91,7 @@ bukmeker/
 ## Запуск
 
 ```bash
-pytest tests/ -q        # 152 passed
+pytest tests/ -q        # 166 passed
 bukmeker demo             # сквозная синтетическая демонстрация (после pip install -e .)
 bukmeker dashboard         # веб-дашборд в браузере (http://localhost:8501)
 python demo.py             # то же самое без установки пакета

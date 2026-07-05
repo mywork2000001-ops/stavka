@@ -21,7 +21,14 @@ dependencies = [
 [project.optional-dependencies]
 connectors = ["anthropic>=0.40", "requests>=2.31"]
 dashboard = ["streamlit>=1.38"]
-dev = ["pytest>=7.4", "ruff>=0.6", "anthropic>=0.40", "requests>=2.31", "streamlit>=1.38"]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "anthropic>=0.40",
+    "requests>=2.31",
+    "streamlit>=1.38",
+]
 
 [project.scripts]
 bukmeker = "bukmeker.cli:main"

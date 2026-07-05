@@ -56,6 +56,19 @@ class _FakeHttpResponse:
         return self._payload
 
 
+def test_run_demo_executes_end_to_end_without_error(capsys):
+    # This is the primary user-facing command (`bukmeker demo`) -- previously
+    # it was only ever exercised by manually running it in a terminal, so a
+    # regression here would not have been caught by `pytest tests/ -q` in CI.
+    exit_code = cli.main(["demo"])
+    out = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "VALUE BET" in out
+    assert "МОНЕТИЗАЦИЯ КУПОНА" in out
+    assert "ГОТОВО" in out
+
+
 def test_run_connector_without_keys_prints_usage_and_returns_1(capsys):
     exit_code = cli.main(["connector"])
     assert exit_code == 1
@@ -146,3 +159,25 @@ def test_run_dashboard_reports_missing_streamlit_without_crashing(monkeypatch):
     exit_code = cli.main(["dashboard"])
 
     assert exit_code == 1
+
+
+def test_run_connector_sync_rejects_unknown_country(monkeypatch, capsys):
+    def fake_get(url, headers=None, params=None, timeout=None):
+        return _FakeHttpResponse({"response": [{"id": 1, "home": "A", "away": "B"}]})
+
+    monkeypatch.setattr("bukmeker.connectors.raw_source.requests.get", fake_get)
+    monkeypatch.setattr("anthropic.Anthropic", _FakeAnthropicClient)
+
+    exit_code = cli.main(
+        [
+            "connector",
+            "--source-url", "https://provider.example.com",
+            "--source-key", "SRC_KEY",
+            "--anthropic-key", "ANTH_KEY",
+            "--sync",
+            "--sync-country", "ZZZ",
+        ]
+    )
+
+    assert exit_code == 1
+    assert "Unknown --sync-country" in capsys.readouterr().out

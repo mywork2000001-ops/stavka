@@ -8,3 +8,5 @@ dist/
 .venv/
 venv/
 .mypy_cache/
+.coverage
+htmlcov/

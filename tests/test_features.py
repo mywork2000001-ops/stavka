@@ -39,6 +39,21 @@ def test_weighted_rolling_mean_excludes_future_rows():
     assert result.loc[1] < 3.0  # future row (999.0) must not leak in
 
 
+def test_weighted_rolling_mean_returns_nan_when_below_min_periods():
+    # team has 1 pre-cutoff row, but min_periods=2 requires at least 2
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-01-01"]),
+            "value": [1.0],
+            "team_id": [1],
+        }
+    )
+    result = weighted_rolling_mean(
+        df, "date", "value", "team_id", as_of_date=pd.Timestamp("2026-01-15"), min_periods=2
+    )
+    assert np.isnan(result.loc[1])
+
+
 def test_weighted_rolling_mean_returns_nan_not_keyerror_for_team_with_no_prior_history():
     # team 2's only row is AFTER as_of_date -- it has zero pre-cutoff history,
     # which previously made it vanish from the groupby result entirely (a
@@ -64,3 +79,8 @@ def test_ema_reduces_to_constant_for_constant_input():
 def test_home_advantage_score_positive_when_stronger_at_home():
     ha = home_advantage_score(xg_home_avg=2.0, xg_away_avg=1.0)
     assert ha == pytest.approx(1.0)
+
+
+def test_home_advantage_score_rejects_zero_away_average():
+    with pytest.raises(ValueError):
+        home_advantage_score(xg_home_avg=2.0, xg_away_avg=0.0)

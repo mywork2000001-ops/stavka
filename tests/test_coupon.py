@@ -71,3 +71,11 @@ def test_generate_coupons_allows_moderate_workload_under_the_limit():
     bets = [make_bet(i, 100 + i, i, (i,), prob=0.6, odds=2.0) for i in range(15)]
     coupons = generate_coupons(bets, bankroll=1000, max_events=4, max_corr=0.3, top_n=3)
     assert len(coupons) == 3
+
+
+def test_generate_coupons_excludes_combos_with_positive_ev_but_zero_kelly_stake():
+    # kelly_fraction=0.0 -> stake is always 0 even for a positive-EV combo;
+    # such combos must be filtered out, not returned with a useless 0 stake.
+    bets = [make_bet(1, 100, 1, (1,), prob=0.6, odds=2.0)]
+    coupons = generate_coupons(bets, bankroll=1000, max_events=1, max_corr=0.3, kelly_fraction=0.0)
+    assert coupons == []

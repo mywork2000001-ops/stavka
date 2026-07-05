@@ -52,6 +52,12 @@ def test_probability_edge_rejects_fair_prob_outside_unit_interval():
         probability_edge(0.55, 1.5)
 
 
+def test_probability_edge_rejects_fair_prob_exactly_zero():
+    # 0.0 passes the [0, 1] range check but is still invalid as a divisor
+    with pytest.raises(ValueError):
+        probability_edge(0.55, 0.0)
+
+
 def test_kelly_stake_zero_when_no_edge():
     stake = kelly_stake(bankroll=1000, prob=0.4, odds=2.0, fraction=1.0)
     assert stake == pytest.approx(0.0)

@@ -42,6 +42,26 @@ def test_find_record_list_returns_empty_for_no_arrays():
     assert find_record_list({"status": "ok"}) == []
 
 
+def test_get_by_path_returns_none_when_path_continues_past_a_leaf_value():
+    # "a.b.c" where "a.b" resolves to a plain int -- there's nowhere further to go
+    record = {"a": {"b": 1}}
+    assert get_by_path(record, "a.b.c") is None
+
+
+def test_find_record_list_returns_empty_for_non_dict_non_list_input():
+    assert find_record_list("just a string") == []
+    assert find_record_list(None) == []
+    assert find_record_list(42) == []
+
+
+def test_find_record_list_traverses_into_nested_list_of_lists():
+    # a list that is itself not "a list of dicts" (mixed types) must still be
+    # queued and searched, not skipped -- the real record list is nested
+    # inside one of its list elements.
+    raw = {"payload": [1, 2, [{"id": 1}, {"id": 2}]]}
+    assert find_record_list(raw) == [{"id": 1}, {"id": 2}]
+
+
 def test_apply_mapping_produces_canonical_match_with_typed_odds():
     record = {
         "fixture": {"id": 42},
@@ -94,3 +114,12 @@ def test_apply_mapping_treats_non_string_hallucinated_path_as_unmappable():
     assert match.home_team is None
     assert match.away_team is None
     assert match.match_id is None
+
+
+def test_apply_mapping_sets_odds_to_none_when_source_value_is_not_numeric():
+    # a provider field that resolves to a non-numeric string (e.g. "SP" for
+    # "starting price", or a stray placeholder) must not crash float()
+    record = {"odds": {"home": "N/A"}}
+    mapping = FieldMapping(paths={**{f: None for f in CANONICAL_FIELDS}, "home_odds": "odds.home"})
+    match = apply_mapping(record, mapping)
+    assert match.home_odds is None
