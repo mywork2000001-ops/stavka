@@ -69,6 +69,11 @@ class PoissonStrength:
     ) -> "PoissonStrength":
         n_teams = len(teams)
         idx = {t: i for i, t in enumerate(teams)}
+        unknown = (set(home_ids) | set(away_ids)) - set(idx)
+        if unknown:
+            raise ValueError(
+                f"home_ids/away_ids contain team(s) not present in `teams`: {sorted(unknown)}"
+            )
         h_idx = np.array([idx[t] for t in home_ids])
         a_idx = np.array([idx[t] for t in away_ids])
 

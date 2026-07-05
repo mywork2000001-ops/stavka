@@ -51,6 +51,18 @@ def test_poisson_strength_fit_recovers_stronger_attacker():
     assert fitted.attack["A"] > fitted.attack["D"]
 
 
+def test_poisson_strength_fit_rejects_unknown_team_with_clear_error():
+    teams = ["A", "B"]
+    with pytest.raises(ValueError, match="not present in .teams."):
+        PoissonStrength.fit(
+            home_ids=np.array(["A"]),
+            away_ids=np.array(["Unknown Team"]),
+            home_goals=np.array([1]),
+            away_goals=np.array([0]),
+            teams=teams,
+        )
+
+
 def test_poisson_strength_expected_goals_positive():
     teams = ["A", "B"]
     fitted = PoissonStrength(

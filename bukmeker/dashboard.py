@@ -43,6 +43,31 @@ def _probability_table(probs: dict) -> pd.DataFrame:
     return pd.DataFrame({"outcome": list(probs.keys()), "probability": list(probs.values())})
 
 
+def parse_bet_rows(rows: pd.DataFrame) -> tuple[list[ValueBetCandidate], list[tuple[int, str]]]:
+    """Parses the coupon page's editable bet table into `ValueBetCandidate`s.
+    Returns `(candidates, skipped)` where `skipped` is `[(row_index, reason), ...]`
+    for rows that failed to parse -- callers must surface `skipped` to the
+    user rather than silently dropping malformed rows."""
+    candidates: list[ValueBetCandidate] = []
+    skipped: list[tuple[int, str]] = []
+    for idx, row in rows.iterrows():
+        try:
+            team_ids = tuple(int(x) for x in str(row["team_ids"]).split(",") if x.strip())
+            candidates.append(
+                ValueBetCandidate(
+                    bet_id=int(row["bet_id"]),
+                    match_id=int(row["match_id"]),
+                    league_id=int(row["league_id"]),
+                    team_ids=team_ids,
+                    prob=float(row["prob"]),
+                    odds=float(row["odds"]),
+                )
+            )
+        except (ValueError, TypeError) as exc:
+            skipped.append((idx, str(exc)))
+    return candidates, skipped
+
+
 def _value_row(label: str, prob: float, odds: float, bankroll: float, kelly_fraction: float) -> dict:
     return {
         "outcome": label,
@@ -284,29 +309,20 @@ def render_coupon_page() -> None:
     )
     kelly_fraction = col3.slider("Доля Kelly", 0.1, 1.0, 0.5, 0.05, key="coupon_kelly", help=_KELLY_HELP)
 
-    candidates = []
-    for _, row in edited.iterrows():
-        try:
-            team_ids = tuple(int(x) for x in str(row["team_ids"]).split(",") if x.strip())
-            candidates.append(
-                ValueBetCandidate(
-                    bet_id=int(row["bet_id"]),
-                    match_id=int(row["match_id"]),
-                    league_id=int(row["league_id"]),
-                    team_ids=team_ids,
-                    prob=float(row["prob"]),
-                    odds=float(row["odds"]),
-                )
-            )
-        except (ValueError, TypeError):
-            continue
+    candidates, skipped_rows = parse_bet_rows(edited)
+    if skipped_rows:
+        details = "; ".join(f"строка {idx + 1}: {msg}" for idx, msg in skipped_rows)
+        st.warning(f"Пропущено строк с некорректными данными ({len(skipped_rows)}): {details}")
 
     if st.button("Сгенерировать купоны", type="primary"):
-        coupons = generate_coupons(
-            candidates, bankroll=bankroll, max_events=max_events, max_corr=max_corr,
-            kelly_fraction=kelly_fraction, top_n=5,
-        )
-        st.session_state["coupons"] = coupons
+        try:
+            coupons = generate_coupons(
+                candidates, bankroll=bankroll, max_events=max_events, max_corr=max_corr,
+                kelly_fraction=kelly_fraction, top_n=5,
+            )
+            st.session_state["coupons"] = coupons
+        except ValueError as exc:
+            st.error(f"Слишком много комбинаций для перебора: {exc}")
 
     coupons = st.session_state.get("coupons", [])
     if not coupons:

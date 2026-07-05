@@ -39,6 +39,16 @@ def test_expected_calibration_error_zero_for_perfectly_calibrated():
     assert ece == pytest.approx(0.0, abs=1e-6)
 
 
+def test_expected_calibration_error_weights_by_bin_population():
+    # Bin A: 90 samples, all y_prob=0.1, all y_true=0 -> |acc-conf| = 0.1
+    # Bin B: 10 samples, all y_prob=0.9, 5/10 y_true=1  -> |acc-conf| = 0.4
+    # Weighted ECE = 0.9*0.1 + 0.1*0.4 = 0.13, NOT the unweighted mean (0.25).
+    y_prob = np.array([0.1] * 90 + [0.9] * 10)
+    y_true = np.array([0] * 90 + [1] * 5 + [0] * 5)
+    ece = expected_calibration_error(y_true, y_prob, n_bins=2)
+    assert ece == pytest.approx(0.13, abs=1e-9)
+
+
 def test_calculate_metrics_returns_expected_keys():
     raw_scores, y = _synthetic_data()
     probs = 1 / (1 + np.exp(-raw_scores))

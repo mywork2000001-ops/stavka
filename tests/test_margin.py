@@ -35,3 +35,27 @@ def test_shin_rejects_odds_with_no_margin():
     odds = np.array([2.0, 2.0])  # sums of implied prob == 1, no margin
     with pytest.raises(ValueError):
         shin_margin_removal(odds)
+
+
+def test_shin_rejects_odds_at_or_below_one():
+    with pytest.raises(ValueError):
+        shin_margin_removal(np.array([1.0, 3.0, 4.0]))
+    with pytest.raises(ValueError):
+        shin_margin_removal(np.array([0.5, 3.0, 4.0]))
+
+
+def test_multiplicative_rejects_odds_at_or_below_one():
+    with pytest.raises(ValueError):
+        multiplicative_margin_removal(np.array([1.0, 3.0]))
+    with pytest.raises(ValueError):
+        multiplicative_margin_removal(np.array([-2.0, 3.0]))
+
+
+def test_shin_handles_heavy_overround_many_outcome_market():
+    # 15 outcomes all priced at 1.05 -> huge overround; the root for lambda
+    # can fall outside a naive fixed bracket, which the implementation must
+    # detect and expand for rather than raising a raw scipy bracketing error.
+    odds = np.array([1.05] * 15)
+    p = shin_margin_removal(odds)
+    assert p.sum() == pytest.approx(1.0, abs=1e-6)
+    assert np.all(p > 0)

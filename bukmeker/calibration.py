@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-from sklearn.calibration import calibration_curve
 from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import brier_score_loss, log_loss, roc_auc_score
@@ -39,9 +38,26 @@ class IsotonicScaler:
 
 
 def expected_calibration_error(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> float:
-    """ECE = (1/M) * sum_m |acc(B_m) - conf(B_m)|."""
-    prob_true, prob_pred = calibration_curve(y_true, y_prob, n_bins=n_bins)
-    return float(np.mean(np.abs(prob_true - prob_pred)))
+    """ECE = sum_m (n_m/N) * |acc(B_m) - conf(B_m)|, weighted by bin population --
+    NOT sklearn's `calibration_curve` averaged unweighted across bins, which
+    understates ECE when bins have very unequal sample counts (e.g. most
+    predictions clustered near 0 or 1)."""
+    y_true = np.asarray(y_true, dtype=float)
+    y_prob = np.asarray(y_prob, dtype=float)
+    n = len(y_prob)
+    bin_edges = np.linspace(0.0, 1.0, n_bins + 1)
+    bin_indices = np.clip(np.digitize(y_prob, bin_edges[1:-1], right=True), 0, n_bins - 1)
+
+    ece = 0.0
+    for b in range(n_bins):
+        mask = bin_indices == b
+        count = int(mask.sum())
+        if count == 0:
+            continue
+        acc = float(y_true[mask].mean())
+        conf = float(y_prob[mask].mean())
+        ece += (count / n) * abs(acc - conf)
+    return float(ece)
 
 
 def calculate_metrics(y_true: np.ndarray, y_pred_proba: np.ndarray) -> dict:

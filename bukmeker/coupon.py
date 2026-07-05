@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import combinations
+from math import comb
 
 import numpy as np
 
 from .value_betting import kelly_stake
+
+# Guards against runaway combinatorial blowup (sum_r C(n, r) for r in
+# 1..max_events) -- relevant because the dashboard's bet table lets a user
+# freely add rows, and an unbounded n here can hang the process for minutes.
+_MAX_COMBINATIONS_TO_EVALUATE = 200_000
 
 
 @dataclass(frozen=True)
@@ -49,6 +55,15 @@ def generate_coupons(
 ) -> list[dict]:
     """Greedy enumeration of 1..max_events-leg combinations, filtered by the
     correlation constraint, ranked by expected value * recommended stake."""
+    n = len(value_bets)
+    total_combinations = sum(comb(n, r) for r in range(1, max_events + 1))
+    if total_combinations > _MAX_COMBINATIONS_TO_EVALUATE:
+        raise ValueError(
+            f"{total_combinations:,} combinations to evaluate ({n} candidate bets, "
+            f"max_events={max_events}) exceeds the safety limit of "
+            f"{_MAX_COMBINATIONS_TO_EVALUATE:,} -- reduce max_events or the number of candidate bets."
+        )
+
     candidates: list[dict] = []
     for r in range(1, max_events + 1):
         for combo in combinations(value_bets, r):

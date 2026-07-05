@@ -26,7 +26,10 @@ def weighted_rolling_mean(
     min_periods: int = 1,
 ) -> pd.Series:
     """Exponentially-weighted mean of `value_col` per `group_col`, using only rows
-    strictly before `as_of_date` to avoid look-ahead bias."""
+    strictly before `as_of_date` to avoid look-ahead bias. Every group present in
+    `df` gets an entry in the result (NaN if it has no pre-cutoff history) --
+    groups aren't silently dropped, which would otherwise turn a missing-history
+    lookup into a `KeyError` for callers instead of an explicit NaN."""
     history = df[df[date_col] < as_of_date]
 
     def _agg(group: pd.DataFrame) -> float:
@@ -36,7 +39,8 @@ def weighted_rolling_mean(
         weights = exponential_weight(days, lam)
         return float(np.sum(group[value_col].to_numpy() * weights) / np.sum(weights))
 
-    return history.groupby(group_col).apply(_agg, include_groups=False)
+    result = history.groupby(group_col).apply(_agg, include_groups=False)
+    return result.reindex(df[group_col].unique())
 
 
 def ema(values: np.ndarray, span: int) -> np.ndarray:

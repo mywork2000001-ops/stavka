@@ -39,6 +39,22 @@ def test_weighted_rolling_mean_excludes_future_rows():
     assert result.loc[1] < 3.0  # future row (999.0) must not leak in
 
 
+def test_weighted_rolling_mean_returns_nan_not_keyerror_for_team_with_no_prior_history():
+    # team 2's only row is AFTER as_of_date -- it has zero pre-cutoff history,
+    # which previously made it vanish from the groupby result entirely (a
+    # `.loc[2]` lookup would raise KeyError instead of returning NaN).
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-01-01", "2026-06-01"]),
+            "value": [1.0, 999.0],
+            "team_id": [1, 2],
+        }
+    )
+    result = weighted_rolling_mean(df, "date", "value", "team_id", as_of_date=pd.Timestamp("2026-01-15"))
+    assert result.loc[1] == pytest.approx(1.0)
+    assert np.isnan(result.loc[2])
+
+
 def test_ema_reduces_to_constant_for_constant_input():
     values = np.full(20, 5.0)
     result = ema(values, span=5)

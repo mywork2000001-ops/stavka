@@ -1,3 +1,5 @@
+import pytest
+
 from bukmeker.coupon import ValueBetCandidate, combo_is_valid, generate_coupons, pairwise_correlation
 
 
@@ -54,4 +56,18 @@ def test_generate_coupons_excludes_correlated_combos():
 def test_generate_coupons_respects_top_n():
     bets = [make_bet(i, 100 + i, i, (i,), prob=0.6, odds=2.0) for i in range(10)]
     coupons = generate_coupons(bets, bankroll=1000, max_events=1, max_corr=0.3, top_n=3)
+    assert len(coupons) == 3
+
+
+def test_generate_coupons_rejects_excessive_combinatorial_workload():
+    # 50 candidate bets * max_events=5 -> ~2.37M combinations, well past the
+    # safety limit -- must fail fast with a clear error, not hang.
+    bets = [make_bet(i, 100 + i, i, (i,), prob=0.6, odds=2.0) for i in range(50)]
+    with pytest.raises(ValueError, match="exceeds the safety limit"):
+        generate_coupons(bets, bankroll=1000, max_events=5, max_corr=0.3)
+
+
+def test_generate_coupons_allows_moderate_workload_under_the_limit():
+    bets = [make_bet(i, 100 + i, i, (i,), prob=0.6, odds=2.0) for i in range(15)]
+    coupons = generate_coupons(bets, bankroll=1000, max_events=4, max_corr=0.3, top_n=3)
     assert len(coupons) == 3

@@ -9,6 +9,7 @@ multi-tenant auth system.
 
 from __future__ import annotations
 
+import hmac
 import os
 
 import streamlit as st
@@ -39,7 +40,8 @@ def require_password() -> bool:
     st.title("Bukmeker — вход")
     entered = st.text_input("Пароль", type="password", key="_bukmeker_password_input")
     if st.button("Войти", key="_bukmeker_login_button"):
-        if entered == password:
+        # constant-time comparison: avoids leaking password length/prefix via response timing
+        if hmac.compare_digest(entered, password):
             st.session_state[_SESSION_KEY] = True
             st.rerun()
         else:
