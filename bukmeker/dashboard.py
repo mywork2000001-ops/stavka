@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from bukmeker.auth import require_password
 from bukmeker.coupon import ValueBetCandidate, generate_coupons
 from bukmeker.entities import build_seed_registry
 from bukmeker.margin import shin_margin_removal
@@ -256,6 +257,10 @@ def render_about_tab() -> None:
 
 def main() -> None:
     st.set_page_config(page_title="Bukmeker — Value Betting Dashboard", layout="wide")
+
+    if not require_password():
+        return
+
     st.title("Bukmeker — Value Betting Dashboard")
     st.caption("Мультиспортивный движок оценки value bets, купонов и монетизации.")
 
