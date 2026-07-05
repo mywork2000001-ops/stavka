@@ -1,18 +1,50 @@
-# MATH CORE PROMPT — Value Betting Quantitative Engine
+# MATH CORE PROMPT — Multi-Sport Value Betting Quantitative Engine
 
-Дистиллированная инженерная спецификация, выведенная из `bukmeker.txt`. Область —
-математическое ядро value-betting платформы (без Node/React/RabbitMQ/K8s
-инфраструктуры). Этот файл — не только исходный промт, но и актуальный протокол
-принятых архитектурных решений: он обновляется по мере того, как ядро превращается
-из набора формул в завершённый, пригодный к установке проект.
+**v2.** Дистиллированная инженерная спецификация, выведенная из `bukmeker.txt` и
+расширенная по прямому запросу до мультиспортивной, мультистрановой платформы с
+монетизацией купонов и AI-коннектором данных. Область — математическое и
+интеграционное ядро (без Node/React/RabbitMQ/K8s инфраструктуры). Этот файл — не
+только исходный промт, но и актуальный протокол принятых архитектурных решений:
+он обновляется по мере того, как ядро растёт.
 
 ## Роль
-Ты — квант-разработчик, реализующий детерминированное, воспроизводимое ядро оценки
-вероятностей исходов футбольных матчей и обнаружения value bets, пригодное для
-дальнейшей интеграции в промышленный пайплайн (Feature Store → Model → Calibration →
-Margin Removal → Value Detection → Bankroll/Coupon).
+Ты — квант-разработчик и платформенный инженер, реализующий детерминированное,
+воспроизводимое ядро оценки вероятностей исходов **любых видов спорта, любых стран
+и лиг**, обнаружения value bets, сборки монетизируемых купонов и подключения
+произвольных источников данных через ИИ-маппинг схемы — пригодное для дальнейшей
+интеграции в промышленный пайплайн (Data Connectors → Feature Store → Model →
+Calibration → Margin Removal → Value Detection → Bankroll/Coupon → Monetization).
 
-## Обязательные математические компоненты
+## Расширение объёма (v2): мультиспорт, мультистрана, монетизация, AI-коннектор
+
+1. **Универсальность вместо жёсткого перечисления.** «Все страны мира, все клубы»
+   технически невозможно и бессмысленно захардкодить — вместо этого сущностная
+   модель (`Sport → Country → League → Competitor`) не имеет встроенных
+   ограничений на конкретные страны/лиги/клубы/виды спорта. Полнота охвата
+   достигается подключением внешних источников данных (см. п.4), а не списком в
+   коде. В комплекте — небольшой иллюстративный seed (5 стран, 3 вида спорта,
+   6 лиг, 16 участников) для демонстрации архитектуры, не претендующий на полноту.
+2. **Мультиспорт через семейства моделей**, а не через переписывание футбольной
+   логики: `ScoringModel.POISSON_GOALS` (футбол, хоккей, гандбол — уже
+   реализованные Poisson/Dixon-Coles модели), `ScoringModel.POINT_SPREAD`
+   (баскетбол, американский футбол — Normal-модель маржи/тотала по CLT),
+   `ScoringModel.SET_BASED` (теннис, волейбол — race-to-N-sets по
+   отрицательному биномиальному распределению). Каждое семейство выдаёт словарь
+   вероятностей исходов, совместимый с тем же движком value-detection/Kelly/coupon.
+3. **Монетизация купона** — расчётная, не платёжная: купон с общим
+   (совместным) коэффициентом, ставкой, комиссией платформы (% от выплаты) и
+   чистой выплатой. Никакой интеграции реальных платежей — это осознанная
+   граница объёма (см. ниже).
+4. **AI-коннектор данных для произвольного API-ключа.** Пользователь передаёт
+   (а) ключ произвольного источника спортивных данных и (б) свой Anthropic API
+   ключ. Система реально обращается по HTTP к источнику, берёт один
+   пример-запись из ответа и реально вызывает Anthropic API с просьбой
+   сопоставить поля этой неизвестной JSON-схемы с каноническими полями
+   платформы (match_id, home_team, away_team, odds и т.д.). Дальше маппинг
+   применяется ко всем записям. Это заменяет ручное написание парсера под
+   каждого провайдера.
+
+## Обязательные математические компоненты (v1, футбольное ядро)
 
 1. **Взвешивание истории**: экспоненциальное затухание `w(t) = e^{-λt}`, λ по умолчанию
    0.005 (полураспад ≈138 дней); скользящее взвешенное среднее и EMA.
@@ -64,26 +96,37 @@ Kelly Overbetting, Small Sample Bias, Correlation Risk, Closing Line Bias.
 ### Структура пакета
 ```
 bukmeker/                    # корень проекта (pip-устанавливаемый пакет)
-├── pyproject.toml           # setuptools build, entry point `bukmeker`, extras [dev]
+├── pyproject.toml           # setuptools build, entry point `bukmeker`, extras [connectors, dev]
 ├── LICENSE                  # MIT
 ├── .gitignore
 ├── .github/workflows/ci.yml # GitHub Actions: ruff + pytest на 3.11 и 3.12
 ├── README.md
 ├── PROMPT.md                # этот файл
-├── demo.py                  # тонкая обёртка над bukmeker.cli.run_demo()
+├── demo.py                  # тонкая обёртка над bukmeker.cli.main(["demo"])
 ├── bukmeker/                # импортируемый пакет
 │   ├── features.py          # exponential_weight, weighted_rolling_mean, ema, home_advantage_score
 │   ├── ratings.py            # elo_expected_score, elo_update, BayesianRating, PoissonStrength
+│   ├── entities.py            # Sport/Country/League/Competitor, EntityRegistry, build_seed_registry
 │   ├── models/goals.py        # poisson_*, bivariate_poisson_matrix, dixon_coles_matrix,
 │   │                          # negative_binomial_pmf, skellam_probs, monte_carlo_outcome_probs,
 │   │                          # outcome_probs_from_matrix
+│   ├── sports/                # мультиспортивные модели вероятностей исхода
+│   │   ├── football.py          # predict_1x2 (обёртка над Dixon-Coles)
+│   │   ├── basketball.py        # predict_moneyline/spread_cover/total (Normal margin/total)
+│   │   └── tennis.py             # race_to_win_prob, predict_match_win_prob (best_of 3/5)
 │   ├── margin.py              # shin_margin_removal, multiplicative_margin_removal
 │   ├── calibration.py         # PlattScaler, IsotonicScaler, expected_calibration_error, calculate_metrics
 │   ├── value_betting.py       # expected_value, value_percentage, overlay, probability_edge,
 │   │                          # bootstrap_probability_ci, kelly_stake, apply_global_limits
 │   ├── coupon.py               # ValueBetCandidate, pairwise_correlation, combo_is_valid, generate_coupons
-│   └── cli.py                  # argparse CLI: `bukmeker demo`
-└── tests/                    # 55 unit-тестов, по одному файлу на модуль
+│   ├── monetization.py          # CouponReport, build_coupon_report, format_coupon_report
+│   ├── connectors/              # AI-коннектор данных для произвольного API-ключа
+│   │   ├── schema.py               # CanonicalMatch, FieldMapping, get_by_path, find_record_list
+│   │   ├── raw_source.py            # RawDataSource — generic HTTP-клиент по API-ключу
+│   │   ├── ai_mapper.py              # ClaudeFieldMapper — реальный вызов Anthropic API
+│   │   └── ai_connector.py            # AIDataConnector — fetch + normalize
+│   └── cli.py                  # argparse CLI: `bukmeker demo`, `bukmeker connector`
+└── tests/                    # 96 unit-тестов, по одному файлу на модуль
 ```
 
 ### Ключевые инженерные решения и их обоснование
@@ -112,8 +155,56 @@ bukmeker/                    # корень проекта (pip-устанавл
   установки) запускают идентичный сквозной прогон на synthetic-данных.
 - **CI**: `ruff check .` + `pytest tests/ -q` на Python 3.11 и 3.12 при push/PR в `main`.
 
+### Ключевые инженерные решения v2 (мультиспорт / монетизация / AI-коннектор)
+- **`entities.py`**: единая иерархия `Sport → Country → League → Competitor` вместо
+  отдельных моделей `Team`/`Player` — теннисный игрок и футбольный клуб оба являются
+  `Competitor` с полем `kind` (`club`/`player`/`national_team`), что позволяет
+  value-betting движку (`ValueBetCandidate.team_ids`) работать одинаково для
+  командных и индивидуальных видов спорта без изменения кода купонов.
+- **`ScoringModel`** — это перечисление, привязанное к `Sport`, а не к лиге или
+  стране: любая новая лига любой страны автоматически "знает", какое семейство
+  моделей вероятностей к ней применимо, без ручной настройки.
+- **`basketball.predict_moneyline`/`predict_total`** используют Normal-приближение
+  маржи/тотала (обоснование — CLT при 80–120+ независимых владениях мячом), а не
+  Poisson по очкам, как в футболе — попытка применить Poisson к баскетбольным
+  очкам даёт грубо некалиброванные хвосты распределения.
+- **`tennis.race_to_win_prob`** реализует точную формулу "гонки до W побед"
+  (`sum_k C(W-1+k, k) p^W (1-p)^k`), проверенную тестом против известной
+  закрытой формулы для best-of-3 (`p²(3-2p)`) — сеты считаются iid Bernoulli,
+  что игнорирует альтернацию подачи и внутригеймовую динамику (осознанное
+  упрощение, см. docstring).
+- **`monetization.py`** сознательно отделён от `coupon.py`: генерация купона
+  (корреляция, EV, Kelly) — чистая математика; `build_coupon_report` — бизнес-
+  логика ценообразования (комиссия платформы как % от gross payout, по образцу
+  индустрии coupon/tips-маркетплейсов). Разделение позволяет менять модель
+  монетизации, не трогая математику отбора ставок.
+- **AI-коннектор (`connectors/`)** сделан из четырёх независимых, инжектируемых
+  по конструктору частей: `RawDataSource` (реальный HTTP, ключ в заголовке ИЛИ
+  query-параметре — оба варианта явно поддержаны), `ClaudeFieldMapper` (реальный
+  вызов Anthropic Messages API; принимает `client=` для внедрения фейка в тестах
+  без сетевых вызовов и трат), `find_record_list`/`get_by_path` (эвристический
+  BFS-поиск массива записей в незнакомой JSON-структуре + разрешение dotted-path
+  с поддержкой индексов списков), `AIDataConnector` (склеивает всё в
+  `fetch_and_normalize()`). Такое разделение — единственный способ протестировать
+  сетевой/AI-код детерминированно (96 тестов проходят без единого реального
+  HTTP- или API-запроса).
+- **`bukmeker connector` CLI** явно отказывается работать без реальных ключей
+  (печатает usage и возвращает код 1) — никакого синтетического fallback,
+  который мог бы создать иллюзию, что данные реальны, когда это не так.
+
 ### Явные ограничения текущего объёма
-Node.js backend, Prisma/PostgreSQL/TimescaleDB, RabbitMQ, React-фронтенд, Docker
-Compose/Kubernetes и мониторинг (Prometheus/Grafana) из `bukmeker.txt` §1.2 сознательно
-не реализованы — по согласованному решению текущий проект ограничен математическим
-ядром как отдельной, тестируемой Python-библиотекой.
+- Node.js backend, Prisma/PostgreSQL/TimescaleDB, RabbitMQ, React-фронтенд, Docker
+  Compose/Kubernetes и мониторинг (Prometheus/Grafana) из `bukmeker.txt` §1.2
+  сознательно не реализованы — проект остаётся Python-библиотекой.
+- **Монетизация — только расчёт.** `build_coupon_report` считает комиссию и
+  чистую выплату; реальных платежей, счетов пользователей, эскроу или движения
+  денег в проекте нет и не планируется в этом объёме — по прямому решению в
+  этой сессии (альтернатива "реальные платежи Stripe/PayPal" требует юридической
+  регистрации как букмекер/финсервис и была осознанно отклонена).
+- **Seed-данные по странам/клубам иллюстративны, не исчерпывающи.** Реальное
+  "все страны, все клубы" достигается только через `connectors/` и живые
+  источники данных — в коде нет и не будет статичного списка тысяч клубов.
+- **AI-коннектор тратит реальные деньги и требует реальной сети.** `bukmeker
+  connector` и `ClaudeFieldMapper` при реальном использовании выполняют платный
+  вызов Anthropic API и HTTP-запрос к стороннему провайдеру — это не бесплатная
+  и не офлайн операция, в отличие от `bukmeker demo`.

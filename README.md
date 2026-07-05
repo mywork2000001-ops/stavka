@@ -1,18 +1,40 @@
-# Bukmeker — Value Betting Math Core
+# Bukmeker — Multi-Sport Value Betting Engine
 
 [![CI](https://github.com/OWNER/bukmeker/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/bukmeker/actions/workflows/ci.yml)
 
-Математическое ядро, реализованное по спецификации в [PROMPT.md](PROMPT.md)
-(дистиллировано из `bukmeker.txt`), упакованное как готовый к установке Python-пакет.
-Полная промышленная платформа (Node/React/RabbitMQ/Postgres/Docker) в этот пакет
-не входит — здесь только проверяемая тестами количественная логика.
+Математическое и интеграционное ядро, реализованное по спецификации в
+[PROMPT.md](PROMPT.md) (дистиллировано из `bukmeker.txt`), упакованное как готовый
+к установке Python-пакет. Полная промышленная платформа (Node/React/RabbitMQ/
+Postgres/Docker, реальные платежи) в этот пакет не входит — см. «Явные ограничения
+текущего объёма» в PROMPT.md.
 
 > Замените `OWNER` в бейдже на имя владельца после публикации на GitHub.
+
+## Возможности
+
+- **Мультиспорт**: футбол (Poisson/Dixon-Coles), баскетбол (Normal margin/total),
+  теннис (race-to-N-sets) — единый интерфейс вероятностей исхода для всех трёх.
+- **Мультистрана/мультилига**: универсальная схема `Sport → Country → League →
+  Competitor`, не привязанная к конкретному списку клубов — реальное покрытие
+  достигается через коннекторы данных, а не хардкод (см. `entities.py`).
+- **Value detection & bankroll**: EV, Value%, снятие маржи (Shin), фракционный
+  Kelly, генератор купонов с ограничением по корреляции исходов.
+- **Монетизация купона**: расчёт общего коэффициента, выплаты, комиссии
+  платформы и чистой прибыли (только расчёт — без реальных платежей).
+- **AI-коннектор данных**: подключите любой источник спортивных данных своим
+  API-ключом — Anthropic API реально сопоставляет незнакомую JSON-схему
+  провайдера с канонической схемой платформы.
 
 ## Установка
 
 ```bash
-# из корня проекта
+# базовый пакет (математика, мультиспорт, купоны, монетизация)
+pip install -e .
+
+# + AI-коннектор данных (Anthropic SDK + requests)
+pip install -e ".[connectors]"
+
+# + инструменты разработки (pytest, ruff) — включает connectors
 pip install -e ".[dev]"
 ```
 
@@ -20,41 +42,92 @@ pip install -e ".[dev]"
 
 ```
 bukmeker/
-  pyproject.toml    — сборка (setuptools), entry point `bukmeker`, extras [dev]
+  pyproject.toml    — сборка (setuptools), entry point `bukmeker`, extras [connectors, dev]
   .github/workflows/ci.yml — CI: ruff + pytest на Python 3.11 и 3.12
   bukmeker/
-    features.py     — экспоненциальное затухание, EMA, взвешенное скользящее среднее
-    ratings.py       — Elo, байесовский рейтинг, Poisson attack/defence (MLE)
-    models/goals.py  — Poisson, бивариатный Poisson, Dixon-Coles, Negative Binomial,
-                        Skellam, Monte-Carlo
-    margin.py        — снятие маржи букмекера (Shin, мультипликативный)
-    calibration.py   — Platt scaling, isotonic regression, ECE/Brier/LogLoss/ROC-AUC
-    value_betting.py — EV, Value%, Overlay, Probability Edge, bootstrap CI, Kelly
-    coupon.py        — генератор купонов с ограничением по корреляции исходов
-    cli.py           — точка входа `bukmeker demo`
-  tests/             — 55 unit-тестов, каждая формула проверена против scipy/sklearn
-                        или независимого расчёта
-  demo.py            — тонкая обёртка над bukmeker.cli.run_demo() для запуска без установки
+    features.py       — экспоненциальное затухание, EMA, взвешенное скользящее среднее
+    ratings.py         — Elo, байесовский рейтинг, Poisson attack/defence (MLE)
+    entities.py        — Sport/Country/League/Competitor + seed-реестр (5 стран, 3 спорта)
+    models/goals.py    — Poisson, бивариатный Poisson, Dixon-Coles, Negative Binomial,
+                          Skellam, Monte-Carlo
+    sports/
+      football.py        — predict_1x2 (обёртка над Dixon-Coles)
+      basketball.py       — predict_moneyline / predict_spread_cover / predict_total
+      tennis.py            — race_to_win_prob, predict_match_win_prob (best_of 3/5)
+    margin.py          — снятие маржи букмекера (Shin, мультипликативный)
+    calibration.py     — Platt scaling, isotonic regression, ECE/Brier/LogLoss/ROC-AUC
+    value_betting.py   — EV, Value%, Overlay, Probability Edge, bootstrap CI, Kelly
+    coupon.py          — генератор купонов с ограничением по корреляции исходов
+    monetization.py    — CouponReport: общий коэффициент, комиссия, чистая выплата
+    connectors/
+      schema.py           — CanonicalMatch, FieldMapping, get_by_path, find_record_list
+      raw_source.py        — RawDataSource: generic HTTP-клиент по API-ключу
+      ai_mapper.py          — ClaudeFieldMapper: реальный вызов Anthropic API
+      ai_connector.py        — AIDataConnector: fetch + normalize
+    cli.py             — `bukmeker demo`, `bukmeker connector`
+  tests/               — 96 unit-тестов; сетевые/AI-вызовы протестированы через
+                          инжектируемые фейки, без реальных запросов и трат
+  demo.py              — тонкая обёртка над bukmeker.cli.main(["demo"])
 ```
 
 ## Запуск
 
 ```bash
-pytest tests/ -q        # 55 passed
-bukmeker demo            # сквозная демонстрация (после pip install -e .)
-python demo.py            # то же самое без установки пакета
-ruff check .               # линт (используется в CI)
+pytest tests/ -q        # 96 passed
+bukmeker demo             # сквозная синтетическая демонстрация (после pip install -e .)
+python demo.py             # то же самое без установки пакета
+ruff check .                # линт (используется в CI)
 ```
 
-## Сквозной пример
+## Сквозной пример (`bukmeker demo`)
 
-`bukmeker demo` прогоняет полный конвейер на synthetic-данных: подгонка Poisson
-attack/defence рейтингов → ожидаемые голы конкретного матча → матрица Dixon-Coles →
-1X2 вероятности → снятие маржи букмекера (Shin) → обнаружение value bet (EV, Value%) →
-half-Kelly стейк → генерация купона из нескольких матчей с фильтрацией по корреляции.
+Прогоняет полный конвейер на synthetic-данных: подгонка Poisson attack/defence
+рейтингов → ожидаемые голы конкретного матча → матрица Dixon-Coles → 1X2
+вероятности → снятие маржи букмекера (Shin) → обнаружение value bet (EV, Value%) →
+half-Kelly стейк → генерация купона из нескольких матчей с фильтрацией по
+корреляции → баскетбол и теннис тем же движком → монетизация лучшего купона.
+
+## AI-коннектор данных (`bukmeker connector`)
+
+Реальная (не синтетическая) интеграция: требует API-ключ источника данных и
+Anthropic API-ключ. Тратит реальные деньги и делает реальные сетевые запросы.
+
+```bash
+export SOURCE_API_KEY="..."       # ключ вашего провайдера спортивных данных
+export ANTHROPIC_API_KEY="..."    # ваш ключ Anthropic API
+
+bukmeker connector \
+  --source-url https://api.example-sports-data.com \
+  --path fixtures?date=2026-07-05 \
+  --key-location header --key-name x-api-key
+```
+
+Без ключей команда печатает usage и завершается кодом 1 — синтетического
+fallback намеренно нет, чтобы не создавать иллюзию, что показаны реальные данные.
+
+Программно:
+
+```python
+from bukmeker.connectors import AIDataConnector, ClaudeFieldMapper, RawDataSource
+
+source = RawDataSource(base_url="https://api.example.com", api_key="SOURCE_KEY")
+mapper = ClaudeFieldMapper(api_key="ANTHROPIC_KEY")
+matches = AIDataConnector(source, mapper).fetch_and_normalize("fixtures")
+```
+
+## Монетизация купона
+
+```python
+from bukmeker.coupon import generate_coupons
+from bukmeker.monetization import build_coupon_report, format_coupon_report
+
+coupons = generate_coupons(value_bets, bankroll=10_000)
+report = build_coupon_report(coupons[0], stake=100.0, platform_fee_pct=0.05)
+print(format_coupon_report(report))
+```
 
 ## Область проекта
 
-Реализовано осознанно только математическое ядро — см. раздел «Явные ограничения
-текущего объёма» в [PROMPT.md](PROMPT.md) для полного списка того, что намеренно
-не входит (backend, БД, очереди, фронтенд, инфраструктура).
+См. «Явные ограничения текущего объёма» в [PROMPT.md](PROMPT.md): без backend/БД/
+очередей/фронтенда/инфраструктуры, без реальных платежей, seed-данные по странам
+и клубам иллюстративны (не исчерпывающий список).
