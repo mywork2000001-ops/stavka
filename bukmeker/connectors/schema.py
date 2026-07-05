@@ -89,10 +89,14 @@ def find_record_list(raw, min_len: int = 1) -> list[dict]:
 
 
 def apply_mapping(record: dict, mapping: FieldMapping) -> CanonicalMatch:
+    """Note: `mapping` typically comes from an LLM's structured output
+    (`ClaudeFieldMapper`), which is untrusted -- a path that isn't a string
+    (e.g. the model hallucinates an int or a list instead of "a.b.c") is
+    treated as unmappable rather than crashing on `path.split(".")`."""
     values: dict = {}
     for field_name in CANONICAL_FIELDS:
         path = mapping.get(field_name)
-        values[field_name] = get_by_path(record, path) if path else None
+        values[field_name] = get_by_path(record, path) if isinstance(path, str) and path else None
 
     for odds_field in ("home_odds", "draw_odds", "away_odds"):
         raw_value = values.get(odds_field)

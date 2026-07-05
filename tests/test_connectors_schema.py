@@ -76,3 +76,21 @@ def test_all_canonical_fields_covered_by_mapping_with_nulls():
     match = apply_mapping({"anything": True}, mapping)
     assert match.match_id is None
     assert match.home_odds is None
+
+
+def test_apply_mapping_treats_non_string_hallucinated_path_as_unmappable():
+    # ClaudeFieldMapper's output is untrusted LLM structured output -- a
+    # non-string "path" (int, list, dict) must not crash `path.split(".")`.
+    record = {"teams": {"home": {"name": "Arsenal"}}}
+    mapping = FieldMapping(
+        paths={
+            **{f: None for f in CANONICAL_FIELDS},
+            "home_team": 123,
+            "away_team": ["teams", "home", "name"],
+            "match_id": {"nested": "object"},
+        }
+    )
+    match = apply_mapping(record, mapping)
+    assert match.home_team is None
+    assert match.away_team is None
+    assert match.match_id is None

@@ -44,6 +44,8 @@ class ClaudeFieldMapper:
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": json.dumps(sample_record)}],
         )
+        if not message.content:
+            raise ValueError("Anthropic API returned an empty response (no content blocks)")
         text = message.content[0].text
         return FieldMapping(paths=_extract_json_object(text))
 

@@ -19,13 +19,22 @@ def value_percentage(model_prob: float, odds: float) -> float:
     return model_prob * odds - 1.0
 
 
+def _validate_prob(name: str, prob: float) -> None:
+    if not (0.0 <= prob <= 1.0):
+        raise ValueError(f"{name} must be in [0, 1], got {prob}")
+
+
 def overlay(model_prob: float, fair_prob: float) -> float:
     """Overlay = p_model - p_fair."""
+    _validate_prob("model_prob", model_prob)
+    _validate_prob("fair_prob", fair_prob)
     return model_prob - fair_prob
 
 
 def probability_edge(model_prob: float, fair_prob: float) -> float:
     """Probability Edge = p_model / p_fair - 1."""
+    _validate_prob("model_prob", model_prob)
+    _validate_prob("fair_prob", fair_prob)
     if fair_prob <= 0:
         raise ValueError("fair_prob must be positive")
     return model_prob / fair_prob - 1.0

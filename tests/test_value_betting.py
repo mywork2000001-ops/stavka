@@ -41,6 +41,17 @@ def test_overlay_and_probability_edge():
     assert probability_edge(0.55, 0.50) == pytest.approx(0.10)
 
 
+def test_overlay_rejects_model_prob_outside_unit_interval():
+    # a plausible real mistake: passing odds (e.g. 2.5) where a probability was expected
+    with pytest.raises(ValueError):
+        overlay(2.5, 0.50)
+
+
+def test_probability_edge_rejects_fair_prob_outside_unit_interval():
+    with pytest.raises(ValueError):
+        probability_edge(0.55, 1.5)
+
+
 def test_kelly_stake_zero_when_no_edge():
     stake = kelly_stake(bankroll=1000, prob=0.4, odds=2.0, fraction=1.0)
     assert stake == pytest.approx(0.0)

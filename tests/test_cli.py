@@ -118,3 +118,31 @@ def test_run_connector_sync_rejects_unknown_sport(monkeypatch, capsys):
 
     assert exit_code == 1
     assert "Unknown --sync-sport" in capsys.readouterr().out
+
+
+def test_run_dashboard_invokes_streamlit_via_current_python_interpreter(monkeypatch):
+    import sys
+
+    captured_cmd = {}
+
+    def fake_call(cmd):
+        captured_cmd["cmd"] = cmd
+        return 0
+
+    monkeypatch.setattr("subprocess.call", fake_call)
+
+    exit_code = cli.main(["dashboard", "--port", "8600"])
+
+    assert exit_code == 0
+    cmd = captured_cmd["cmd"]
+    assert cmd[0] == sys.executable
+    assert cmd[1:4] == ["-m", "streamlit", "run"]
+    assert cmd[-2:] == ["--server.port", "8600"]
+
+
+def test_run_dashboard_reports_missing_streamlit_without_crashing(monkeypatch):
+    monkeypatch.setattr("importlib.util.find_spec", lambda name: None)
+
+    exit_code = cli.main(["dashboard"])
+
+    assert exit_code == 1

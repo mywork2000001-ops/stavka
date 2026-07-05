@@ -202,11 +202,12 @@ def run_dashboard(args: argparse.Namespace) -> int:
     """Launches the Streamlit web dashboard (bukmeker/dashboard.py) as a
     subprocess -- opens in the browser like a real application, backed by the
     same tested library functions as `demo`."""
-    import shutil
+    import importlib.util
     import subprocess
+    import sys
     from pathlib import Path
 
-    if shutil.which("streamlit") is None:
+    if importlib.util.find_spec("streamlit") is None:
         print(
             'Streamlit is not installed. Install it with: pip install -e ".[dashboard]"\n'
             "Then run: bukmeker dashboard"
@@ -214,7 +215,11 @@ def run_dashboard(args: argparse.Namespace) -> int:
         return 1
 
     dashboard_path = Path(__file__).resolve().parent / "dashboard.py"
-    cmd = ["streamlit", "run", str(dashboard_path), "--server.port", str(args.port)]
+    # Invoke via `python -m streamlit` (the current interpreter) rather than a
+    # bare "streamlit" command -- a PATH lookup can miss an interpreter-local
+    # install (e.g. a venv without its Scripts/bin dir on PATH), even though
+    # `importlib.util.find_spec` above just confirmed the package is present.
+    cmd = [sys.executable, "-m", "streamlit", "run", str(dashboard_path), "--server.port", str(args.port)]
     return subprocess.call(cmd)
 
 

@@ -12,7 +12,7 @@ class _FakeContentBlock:
 
 class _FakeMessage:
     def __init__(self, text):
-        self.content = [_FakeContentBlock(text)]
+        self.content = [_FakeContentBlock(text)] if text is not None else []
 
 
 class _FakeMessagesResource:
@@ -79,4 +79,13 @@ def test_infer_mapping_raises_on_unparsable_response():
     mapper = ClaudeFieldMapper(client=fake_client)
 
     with pytest.raises(ValueError):
+        mapper.infer_mapping({"id": 1})
+
+
+def test_infer_mapping_raises_clear_error_on_empty_content_response():
+    # A real (if rare) Anthropic API response shape: no content blocks at all.
+    fake_client = _FakeAnthropicClient(None)
+    mapper = ClaudeFieldMapper(client=fake_client)
+
+    with pytest.raises(ValueError, match="empty response"):
         mapper.infer_mapping({"id": 1})
