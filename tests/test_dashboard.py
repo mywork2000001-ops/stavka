@@ -440,3 +440,50 @@ def test_connector_page_sync_checkbox_merges_into_registry(monkeypatch):
     assert not at.exception
     assert len(at.success) == 1
     assert any("Синхронизация: +1 лиг" in i.value for i in at.info)
+
+
+def test_coupon_page_save_to_history_and_period_stats():
+    at = _booted("coupon")
+    at = _click(at, "Сгенерировать купоны")
+    at = _click(at, "💾 Сохранить купон в историю")
+    assert not at.exception
+    assert len(at.success) == 1
+    assert len(at.session_state["coupon_history"]) == 1
+
+    # default period ("Сегодня") should include the just-saved coupon
+    metrics = {m.label: m.value for m in at.metric}
+    assert metrics["Купонов за период"] == "1"
+    assert float(metrics["Сумма ставок"]) == 100.0
+
+
+def test_coupon_page_history_period_filter_excludes_other_months():
+    from datetime import datetime, timedelta
+
+    at = _booted("coupon")
+    at = _click(at, "Сгенерировать купоны")
+    at = _click(at, "💾 Сохранить купон в историю")
+
+    # backdate the saved record to 2 months ago
+    at.session_state["coupon_history"][0]["saved_at"] = datetime.now() - timedelta(days=62)
+    at = at.run(timeout=30)
+
+    at.session_state["coupon_history_period"] = "month"
+    at = at.run(timeout=30)
+    assert not at.exception
+    assert any("Нет сохранённых купонов за период" in i.value for i in at.info)
+
+    at.session_state["coupon_history_period"] = "all"
+    at = at.run(timeout=30)
+    metrics = {m.label: m.value for m in at.metric}
+    assert metrics["Купонов за период"] == "1"
+
+
+def test_coupon_page_clear_history_button_empties_the_log():
+    at = _booted("coupon")
+    at = _click(at, "Сгенерировать купоны")
+    at = _click(at, "💾 Сохранить купон в историю")
+    assert len(at.session_state["coupon_history"]) == 1
+
+    at = _click(at, "🗑️ Очистить историю купонов")
+    assert not at.exception
+    assert at.session_state["coupon_history"] == []

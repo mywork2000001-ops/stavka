@@ -16,6 +16,7 @@ was not self-explanatory.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -597,6 +598,82 @@ def render_coupon_page() -> None:
         help="Валовая выплата за вычетом комиссии; дельта — чистая прибыль сверх ставки.",
     )
     st.code(format_coupon_report(report), language=None)
+
+    if st.button("💾 Сохранить купон в историю", key="coupon_save_history"):
+        history = st.session_state.setdefault("coupon_history", [])
+        combo = coupons[choice_idx]["combo"]
+        match_times = [leg_times[b.bet_id] for b in combo if b.bet_id in leg_times]
+        history.append(
+            {
+                "saved_at": datetime.now(),
+                "match_time": min(match_times) if match_times else None,
+                "legs": coupon_df.iloc[choice_idx]["legs"],
+                "n_legs": int(coupon_df.iloc[choice_idx]["n_legs"]),
+                "stake": stake,
+                "net_profit": report.net_profit,
+            }
+        )
+        st.success("Купон сохранён в историю.")
+
+    _render_coupon_history_section()
+
+
+def _render_coupon_history_section() -> None:
+    st.subheader("📊 История и статистика по купонам")
+    st.caption(
+        "Локальная история только текущей сессии браузера (не сохраняется между запусками) — "
+        "статистика по периодам считается от времени матча (если указано) или от момента сохранения."
+    )
+    history = st.session_state.get("coupon_history", [])
+    if not history:
+        st.info("Пока нет сохранённых купонов — нажмите «Сохранить купон в историю» выше.")
+        return
+
+    period_labels = {"day": "Сегодня", "month": "Этот месяц", "all": "Всё время"}
+    period = st.radio(
+        "Период:", list(period_labels), format_func=lambda p: period_labels[p],
+        horizontal=True, key="coupon_history_period",
+    )
+    now = datetime.now()
+
+    def _in_period(record: dict) -> bool:
+        moment = record["match_time"] or record["saved_at"]
+        if period == "day":
+            return moment.date() == now.date()
+        if period == "month":
+            return (moment.year, moment.month) == (now.year, now.month)
+        return True
+
+    filtered = [h for h in history if _in_period(h)]
+    if not filtered:
+        st.info(f"Нет сохранённых купонов за период «{period_labels[period]}».")
+    else:
+        total_stake = sum(h["stake"] for h in filtered)
+        total_profit = sum(h["net_profit"] for h in filtered)
+        roi = total_profit / total_stake if total_stake > 0 else 0.0
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Купонов за период", len(filtered))
+        m2.metric("Сумма ставок", f"{total_stake:.2f}")
+        m3.metric("Чистая прибыль", f"{total_profit:+.2f}")
+        m4.metric("ROI", f"{roi:+.1%}", help="Чистая прибыль / сумма ставок за выбранный период.")
+
+        history_df = pd.DataFrame(
+            [
+                {
+                    "Сохранено": h["saved_at"].strftime("%d.%m.%Y %H:%M"),
+                    "Матч": h["match_time"].strftime("%d.%m.%Y %H:%M") if h["match_time"] else "—",
+                    "Ставки": h["legs"],
+                    "Ставка": h["stake"],
+                    "Прибыль": round(h["net_profit"], 2),
+                }
+                for h in filtered
+            ]
+        )
+        st.dataframe(history_df, width="stretch", hide_index=True)
+
+    if st.button("🗑️ Очистить историю купонов", key="coupon_clear_history"):
+        st.session_state["coupon_history"] = []
+        st.rerun()
 
 
 def render_entities_page() -> None:
