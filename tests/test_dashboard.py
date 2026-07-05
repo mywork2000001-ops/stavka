@@ -62,6 +62,19 @@ def test_football_page_renders_probability_dataframe_and_metric():
     assert len(at.metric) == 1
 
 
+def test_football_page_warns_instead_of_crashing_on_margin_free_odds():
+    at = _booted("football")
+    number_inputs = {ni.label: ni for ni in at.number_input}
+    # 1/3 + 1/3 + 1/3 == 1.0 exactly -> no bookmaker margin to remove
+    number_inputs["Arsenal"].set_value(3.0)
+    number_inputs["Ничья"].set_value(3.0)
+    number_inputs["Chelsea"].set_value(3.0)
+    at = at.run(timeout=30)
+
+    assert not at.exception
+    assert any("не содержат маржи" in w.value for w in at.warning)
+
+
 def test_football_page_shows_real_team_names_not_bare_sliders():
     at = _booted("football")
     subheaders = [s.value for s in at.subheader]
@@ -107,6 +120,34 @@ def test_coupon_page_analysis_builder_shows_real_teams_and_computed_ev():
     assert "Arsenal" in analysis_table.value["Исход"].values
 
 
+def test_coupon_page_analysis_builder_switches_to_basketball():
+    at = _booted("coupon")
+    at.session_state["coupon_analysis_sport"] = "Basketball"
+    at = at.run(timeout=30)
+    assert not at.exception
+
+    selectboxes = {sb.label: sb.value for sb in at.selectbox}
+    assert selectboxes["Дома"] and selectboxes["В гостях"]
+    analysis_table = next(
+        df for df in at.dataframe if list(df.value.columns) == ["Исход", "p_model", "odds", "EV"]
+    )
+    assert len(analysis_table.value) == 2  # home_win/away_win only, no draw
+
+
+def test_coupon_page_analysis_builder_switches_to_tennis():
+    at = _booted("coupon")
+    at.session_state["coupon_analysis_sport"] = "Tennis"
+    at = at.run(timeout=30)
+    assert not at.exception
+
+    selectboxes = {sb.label: sb.value for sb in at.selectbox}
+    assert selectboxes["Игрок 1"] and selectboxes["Игрок 2"]
+    analysis_table = next(
+        df for df in at.dataframe if list(df.value.columns) == ["Исход", "p_model", "odds", "EV"]
+    )
+    assert selectboxes["Игрок 1"] in analysis_table.value["Исход"].values
+
+
 def test_coupon_page_add_leg_button_appends_a_real_analyzed_bet():
     at = _booted("coupon")
     at = _click(at, "➕ Добавить в купон")
@@ -135,6 +176,35 @@ def test_coupon_page_records_match_time_for_added_leg():
     assert legs_table.value["Время матча"].iloc[0] != "—"
 
 
+def test_coupon_page_clear_legs_button_empties_collected_bets():
+    at = _booted("coupon")
+    at = _click(at, "➕ Добавить в купон")
+    assert len(at.session_state["coupon_legs"]) == 1
+
+    at = _click(at, "🗑️ Очистить собранные ставки")
+    assert not at.exception
+    assert at.session_state["coupon_legs"] == []
+    assert at.session_state["_coupon_leg_labels"] == {}
+    assert at.session_state["_coupon_leg_times"] == {}
+
+
+def test_coupon_page_generate_button_reports_combinatorial_guard_error():
+    from bukmeker.coupon import ValueBetCandidate
+
+    at = _booted("coupon")
+    # inject 50 synthetic legs directly into session state -- far past the
+    # generate_coupons() safety limit for max_events=5 combinations
+    at.session_state["coupon_legs"] = [
+        ValueBetCandidate(bet_id=i, match_id=100 + i, league_id=i, team_ids=(i,), prob=0.6, odds=2.0)
+        for i in range(50)
+    ]
+    at.session_state["coupon_max_events"] = 5
+    at = _click(at, "Сгенерировать купоны")
+
+    assert not at.exception
+    assert any("Слишком много комбинаций" in e.value for e in at.error)
+
+
 def test_coupon_page_generate_includes_analysis_leg_alongside_manual_rows():
     at = _booted("coupon")
     at = _click(at, "➕ Добавить в купон")
@@ -143,7 +213,19 @@ def test_coupon_page_generate_includes_analysis_leg_alongside_manual_rows():
 
     coupons_table = next(df for df in at.dataframe if "joint_odds" in df.value.columns)
     all_legs = ", ".join(coupons_table.value["legs"])
-    assert "#1" in all_legs  # the analysis-added leg (bet_id=1) appears in at least one coupon
+    # the analysis-added leg (Arsenal vs Chelsea) appears in at least one coupon
+    assert "Arsenal" in all_legs
+
+
+def test_coupon_results_table_shows_real_club_names_not_bare_bet_ids():
+    at = _booted("coupon")
+    at = _click(at, "Сгенерировать купоны")  # uses only the manual table's default rows
+    assert not at.exception
+
+    coupons_table = next(df for df in at.dataframe if "joint_odds" in df.value.columns)
+    all_legs = ", ".join(coupons_table.value["legs"])
+    assert "#" not in all_legs
+    assert "Arsenal" in all_legs and "Chelsea" in all_legs
 
 
 def _click(at, label):
@@ -318,3 +400,43 @@ def test_connector_page_redacts_api_key_from_error_message(monkeypatch):
     assert len(at.error) == 1
     assert "SUPERSECRET123" not in at.error[0].value
     assert "***" in at.error[0].value
+
+
+def test_connector_page_sync_checkbox_merges_into_registry(monkeypatch):
+    provider_payload = {
+        "response": [
+            {
+                "fixture": {"id": 1},
+                "league": {"name": "Brand New Sync League"},
+                "teams": {"home": {"name": "Sync FC"}, "away": {"name": "Merge United"}},
+            }
+        ]
+    }
+
+    def fake_get(url, headers=None, params=None, timeout=None):
+        class _Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return provider_payload
+
+        return _Resp()
+
+    monkeypatch.setattr("bukmeker.connectors.raw_source.requests.get", fake_get)
+    monkeypatch.setattr("anthropic.Anthropic", _FakeAnthropicClient)
+
+    at = _booted("connector")
+    inputs = {ti.label: ti for ti in at.text_input}
+    inputs["Base URL провайдера"].set_value("https://provider.example.com")
+    inputs["API-ключ провайдера"].set_value("SRC_KEY")
+    inputs["Anthropic API-ключ"].set_value("ANTH_KEY")
+    at.checkbox[0].check()
+    at.run(timeout=30)
+
+    assert len(at.selectbox) == 4  # +2 for sport/country once sync is enabled
+
+    at.button[0].click().run(timeout=30)
+    assert not at.exception
+    assert len(at.success) == 1
+    assert any("Синхронизация: +1 лиг" in i.value for i in at.info)

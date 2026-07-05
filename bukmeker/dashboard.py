@@ -506,7 +506,8 @@ def render_coupon_page() -> None:
     )
     col1, col2, col3 = st.columns(3)
     max_events = col1.slider(
-        "Макс. ставок в купоне", 1, 5, 3, help="Ограничение на число ног (ставок) в одном экспрессе."
+        "Макс. ставок в купоне", 1, 5, 3, key="coupon_max_events",
+        help="Ограничение на число ног (ставок) в одном экспрессе.",
     )
     max_corr = col2.slider(
         "Порог допустимой корреляции", 0.0, 1.0, 0.3, 0.05,
@@ -546,10 +547,23 @@ def render_coupon_page() -> None:
         times = [leg_times[b.bet_id] for b in combo if b.bet_id in leg_times]
         return min(times).strftime("%d.%m.%Y %H:%M") if times else "—"
 
+    leg_labels = st.session_state.get("_coupon_leg_labels", {})
+
+    def _leg_display_name(leg) -> str:
+        # Prefer the "Home — Away: outcome" label recorded by the analysis
+        # builder; manually-typed rows have no such label, but their
+        # `team_ids` still resolve to real names in the entity registry (the
+        # manual table's reference expander uses the same IDs), so club
+        # names are shown either way -- never a bare "#3".
+        if leg.bet_id in leg_labels:
+            return leg_labels[leg.bet_id]
+        names = [reg.competitors[tid].name for tid in leg.team_ids if tid in reg.competitors]
+        return " / ".join(names) if names else f"#{leg.bet_id}"
+
     coupon_df = pd.DataFrame(
         [
             {
-                "legs": ", ".join(f"#{b.bet_id}" for b in c["combo"]),
+                "legs": ", ".join(_leg_display_name(b) for b in c["combo"]),
                 "n_legs": c["n_legs"],
                 "Ближайший матч": _earliest_time(c["combo"]),
                 "joint_prob": round(c["joint_prob"], 4),
