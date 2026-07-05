@@ -1,6 +1,6 @@
 # Bukmeker — Multi-Sport Value Betting Engine
 
-[![CI](https://github.com/OWNER/bukmeker/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/bukmeker/actions/workflows/ci.yml)
+[![CI](https://github.com/mywork2000001-ops/stavka/actions/workflows/ci.yml/badge.svg)](https://github.com/mywork2000001-ops/stavka/actions/workflows/ci.yml)
 
 Математическое и интеграционное ядро, реализованное по спецификации в
 [PROMPT.md](PROMPT.md) (дистиллировано из `bukmeker.txt`), упакованное как готовый
@@ -8,7 +8,7 @@
 Postgres/Docker, реальные платежи) в этот пакет не входит — см. «Явные ограничения
 текущего объёма» в PROMPT.md.
 
-> Замените `OWNER` в бейдже на имя владельца после публикации на GitHub.
+Репозиторий: [github.com/mywork2000001-ops/stavka](https://github.com/mywork2000001-ops/stavka)
 
 > **Подробная пошаговая инструкция по использованию (установка, примеры кода,
 > чтение результатов, подключение реальных данных, частые проблемы) — в
