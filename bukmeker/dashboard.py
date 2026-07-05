@@ -161,6 +161,8 @@ def render_help_page() -> None:
         "- **🌍 Страны и лиги** — демонстрация структуры данных (какие виды спорта/лиги/клубы есть).\n"
         "- **🔌 AI-коннектор** — подключить реальный источник спортивных данных своим API-ключом "
         "(единственная страница с реальными сетевыми и платными запросами).\n"
+        "- **📝 Paper Trading** — журнал прогнозов против реальных исходов без реальных ставок, "
+        "чтобы проверить модель на новых данных со временем, прежде чем рисковать деньгами.\n"
         "- **ℹ️ О проекте** — что это такое и чего здесь сознательно нет (реальные деньги, реальные данные)."
     )
     st.subheader("Глоссарий терминов")
@@ -174,6 +176,11 @@ def render_help_page() -> None:
         "| **Overround / маржа** | Встроенная прибыль букмекера в его коэффициентах. |\n"
         "| **Fair probability (справедливая вероятность)** | Вероятность после вычитания маржи букмекера. |\n"
         "| **Kelly stake** | Рекомендованный размер ставки по критерию Келли (с учётом выбранной доли). |\n"
+        "| **CLV (Closing Line Value)** | log(закрывающий коэффициент / взятый вами) — насколько ваша "
+        "цена была лучше рынка на момент начала матча. Более ранний и надёжный сигнал реального "
+        "преимущества, чем win/loss на малой выборке ставок (страница Paper Trading). |\n"
+        "| **ROC-AUC** | Насколько хорошо модель отличает вероятный исход от маловероятного (0.5 = "
+        "случайное угадывание, 1.0 = идеально); считается на бэктесте странице AI-коннектора. |\n"
         "| **λ (лямбда), ожидаемые голы** | Среднее число голов, которое команда обычно забивает в подобных матчах. |\n"
         "| **ρ (ро), Dixon-Coles** | Небольшая техническая поправка модели для редких низких счётов (0:0, 1:0, 0:1). |\n"
         "| **Overround (баскетбол/теннис аналогично)** | Тот же смысл маржи, что и в футболе. |\n"
@@ -988,6 +995,131 @@ def _render_auto_coupon_section() -> None:
         st.dataframe(auto_df, width="stretch", hide_index=True)
 
 
+_PAPER_TRADING_DEFAULT_PATH = "bukmeker_paper_trading.json"
+
+
+def render_paper_trading_page() -> None:
+    from bukmeker.paper_trading import load_journal, save_journal
+
+    st.title("📝 Paper Trading")
+    st.caption(
+        "Журнал прогнозов против РЕАЛЬНЫХ исходов, без реальных ставок — способ "
+        "проверить модель на новых матчах со временем, прежде чем рисковать деньгами "
+        "(bukmeker.txt §3.7). В отличие от истории купонов на странице «Купон и "
+        "монетизация», журнал хранится в файле, а не в сессии браузера — иначе он "
+        "терял бы смысл при каждом перезапуске дашборда."
+    )
+
+    journal_path = st.text_input(
+        "Файл журнала", value=_PAPER_TRADING_DEFAULT_PATH, key="paper_journal_path",
+        help="Путь к JSON-файлу на этом компьютере. Один и тот же путь — один и тот же журнал.",
+    )
+    journal = load_journal(journal_path)
+
+    # Metrics are rendered into this placeholder AFTER the mutating widgets
+    # below (add-bet form, settle buttons) have had a chance to run in this
+    # same script pass -- otherwise a settle action wouldn't show up in the
+    # metrics until a subsequent rerun, even though the container appears
+    # first on the page (Streamlit layout order follows code order of the
+    # container's declaration, not when it's filled in).
+    metrics_placeholder = st.container()
+
+    st.subheader("Добавить новую paper-ставку")
+    with st.form("paper_bet_form"):
+        c1, c2 = st.columns(2)
+        match_label = c1.text_input("Матч", placeholder="Arsenal vs Chelsea")
+        outcome_label = c2.text_input("Исход", placeholder="home_win")
+        c3, c4, c5 = st.columns(3)
+        model_prob = c3.number_input("Вероятность модели", min_value=0.0, max_value=1.0, value=0.55, step=0.01)
+        odds_taken = c4.number_input("Взятый коэффициент", min_value=1.01, value=2.0, step=0.01)
+        stake = c5.number_input("Условная ставка", min_value=0.01, value=100.0, step=10.0)
+        submitted = st.form_submit_button("➕ Добавить в журнал")
+
+    if submitted:
+        if not match_label or not outcome_label:
+            st.error("Укажите матч и исход.")
+        else:
+            journal.log_bet(match_label, outcome_label, model_prob, odds_taken, stake)
+            save_journal(journal, journal_path)
+            st.success("Ставка добавлена в журнал.")
+
+    pending = journal.pending_bets()
+    if pending:
+        st.subheader(f"Ожидают результата ({len(pending)})")
+        for bet in pending:
+            with st.expander(f"#{bet.bet_id}: {bet.match_label} — {bet.outcome_label}"):
+                st.caption(
+                    f"Модель: {bet.model_prob:.1%} · коэффициент: {bet.odds_taken:.2f} · "
+                    f"ставка: {bet.stake:.2f} · добавлено {bet.placed_at:%d.%m.%Y %H:%M}"
+                )
+                oc1, oc2, oc3 = st.columns(3)
+                result = oc1.radio(
+                    "Реальный исход", ["Ещё не сыграл", "Выиграла", "Проиграла"],
+                    key=f"paper_result_{bet.bet_id}", horizontal=True,
+                )
+                closing_odds_input = oc2.number_input(
+                    "Закрывающий коэффициент (опц.)", min_value=0.0, value=0.0, step=0.01,
+                    key=f"paper_closing_{bet.bet_id}",
+                    help="Коэффициент на этот же исход прямо перед началом матча — для расчёта CLV. "
+                    "Оставьте 0, если не отслеживали.",
+                )
+                if oc3.button("💾 Сохранить исход", key=f"paper_settle_{bet.bet_id}"):
+                    if result == "Ещё не сыграл":
+                        st.warning("Выберите реальный исход (Выиграла/Проиграла), чтобы зафиксировать ставку.")
+                    else:
+                        journal.settle_bet(
+                            bet.bet_id, won=(result == "Выиграла"),
+                            closing_odds=closing_odds_input if closing_odds_input > 0 else None,
+                        )
+                        save_journal(journal, journal_path)
+                        st.success("Исход сохранён.")
+
+    settled = journal.settled_bets()
+    if settled:
+        st.subheader(f"История расчётных ставок ({len(settled)})")
+        history_df = pd.DataFrame(
+            [
+                {
+                    "Матч": b.match_label,
+                    "Исход": b.outcome_label,
+                    "p_model": round(b.model_prob, 3),
+                    "Коэффициент": b.odds_taken,
+                    "Ставка": b.stake,
+                    "Результат": "Выиграла" if b.actual_outcome else "Проиграла",
+                    "Прибыль": round(b.profit, 2),
+                    "CLV": round(b.clv, 4) if b.clv is not None else "—",
+                }
+                for b in settled
+            ]
+        )
+        st.dataframe(history_df, width="stretch", hide_index=True)
+
+    if not journal.bets:
+        st.info("Журнал пуст — добавьте первую paper-ставку через форму выше.")
+
+    summary = journal.summary()
+    with metrics_placeholder:
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric(
+            "Расчётных ставок", summary["n_settled"],
+            help="Ставки, для которых уже известен реальный исход матча.",
+        )
+        m2.metric(
+            "Win rate", f"{summary['hit_rate']:.1%}" if summary["hit_rate"] is not None else "—",
+            help="Доля выигранных ставок среди расчётных. Нет данных, пока нет ни одной расчётной ставки.",
+        )
+        m3.metric(
+            "ROI", f"{summary['roi']:+.1%}" if summary["roi"] is not None else "—",
+            help="Чистая прибыль / сумма ставок по расчётным ставкам.",
+        )
+        m4.metric(
+            "Средний CLV", f"{summary['avg_clv']:+.3f}" if summary["avg_clv"] is not None else "—",
+            help="log(закрывающий коэффициент / взятый). Положительное значение — вы обычно берёте цену "
+            "лучше закрывающей линии рынка. Надёжный и более ранний сигнал реального преимущества, "
+            "чем win/loss на маленькой выборке (требует ввода закрывающего коэффициента при расчёте ставки).",
+        )
+
+
 def render_about_page() -> None:
     st.title("ℹ️ О проекте")
     st.markdown(
@@ -1032,6 +1164,7 @@ def main() -> None:
         st.Page(_PAGES_DIR / "coupon.py", title="Купон и монетизация", icon="🎫"),
         st.Page(_PAGES_DIR / "entities.py", title="Страны и лиги", icon="🌍"),
         st.Page(_PAGES_DIR / "connector.py", title="AI-коннектор", icon="🔌"),
+        st.Page(_PAGES_DIR / "paper_trading.py", title="Paper Trading", icon="📝"),
         st.Page(_PAGES_DIR / "about.py", title="О проекте", icon="ℹ️"),
     ]
     navigation = st.navigation(pages)

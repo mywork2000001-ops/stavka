@@ -48,6 +48,7 @@ def test_dashboard_boots_to_help_page_by_default():
         ("tennis", "🎾 Теннис"),
         ("coupon", "🎫 Купон и монетизация"),
         ("entities", "🌍 Страны и лиги"),
+        ("paper_trading", "📝 Paper Trading"),
         ("about", "ℹ️ О проекте"),
     ],
 )
@@ -709,3 +710,78 @@ def test_connector_page_auto_coupon_reports_no_value_bets_found(monkeypatch):
 
     assert not at.exception
     assert any("не нашла ни одного исхода" in i.value for i in at.info)
+
+
+def _booted_paper_trading(journal_path: str) -> "AppTest":
+    at = _booted("paper_trading")
+    inputs = {ti.label: ti for ti in at.text_input}
+    inputs["Файл журнала"].set_value(journal_path)
+    return at.run(timeout=30)
+
+
+def test_paper_trading_page_starts_empty_with_no_metrics(tmp_path):
+    journal_path = str(tmp_path / "journal.json")
+    at = _booted_paper_trading(journal_path)
+    assert not at.exception
+    assert any("Журнал пуст" in i.value for i in at.info)
+    metrics = {m.label: m.value for m in at.metric}
+    assert metrics["Win rate"] == "—"
+    assert metrics["ROI"] == "—"
+
+
+def test_paper_trading_page_logs_a_new_bet(tmp_path):
+    journal_path = str(tmp_path / "journal.json")
+    at = _booted_paper_trading(journal_path)
+
+    inputs = {ti.label: ti for ti in at.text_input}
+    inputs["Матч"].set_value("Arsenal vs Chelsea")
+    inputs["Исход"].set_value("home_win")
+    at = at.run(timeout=30)
+
+    at = _click(at, "➕ Добавить в журнал")
+    assert not at.exception
+    assert any("добавлена в журнал" in s.value for s in at.success)
+    assert any("Arsenal vs Chelsea" in e.label for e in at.expander)
+
+    # persisted to the file, not just session state
+    from bukmeker.paper_trading import load_journal
+
+    reloaded = load_journal(journal_path)
+    assert len(reloaded.bets) == 1
+    assert reloaded.bets[0].match_label == "Arsenal vs Chelsea"
+
+
+def test_paper_trading_page_settling_a_bet_updates_summary_and_history(tmp_path):
+    from bukmeker.paper_trading import PaperTradingJournal, save_journal
+
+    journal_path = str(tmp_path / "journal.json")
+    journal = PaperTradingJournal()
+    journal.log_bet("Arsenal vs Chelsea", "home_win", 0.55, 2.0, 100.0)
+    save_journal(journal, journal_path)
+
+    at = _booted_paper_trading(journal_path)
+    radios = {r.label: r for r in at.radio}
+    radios["Реальный исход"].set_value("Выиграла")
+    at = at.run(timeout=30)
+
+    settle_button = next(b for label, b in {b.label: b for b in at.button}.items() if "Сохранить исход" in label)
+    at = settle_button.click().run(timeout=30)
+
+    assert not at.exception
+    assert any("Исход сохранён" in s.value for s in at.success)
+
+    metrics = {m.label: m.value for m in at.metric}
+    assert metrics["Win rate"] == "100.0%"
+    assert metrics["ROI"] == "+100.0%"
+
+    history_table = next(df for df in at.dataframe if "Прибыль" in df.value.columns)
+    assert history_table.value["Результат"].iloc[0] == "Выиграла"
+    assert history_table.value["Прибыль"].iloc[0] == 100.0
+
+
+def test_paper_trading_page_rejects_empty_match_or_outcome(tmp_path):
+    journal_path = str(tmp_path / "journal.json")
+    at = _booted_paper_trading(journal_path)
+    at = _click(at, "➕ Добавить в журнал")
+    assert not at.exception
+    assert any("Укажите матч и исход" in e.value for e in at.error)

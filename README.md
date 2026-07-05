@@ -38,6 +38,11 @@ Postgres/Docker, реальные платежи) в этот пакет не в
   единого вручную введённого числа (`bukmeker.backtest`, `bukmeker.live_predictions`).
 - **Веб-дашборд** (`bukmeker dashboard`): интерактивное приложение в браузере
   поверх той же математики — без командной строки и без чтения кода.
+- **Paper trading**: журнал прогнозов против реальных исходов (без реальных
+  ставок) с CLV (Closing Line Value), win rate и ROI — способ проверить модель
+  на новых матчах со временем, прежде чем рисковать деньгами (`bukmeker.paper_trading`,
+  вкладка «📝 Paper Trading» в дашборде). Хранится в JSON-файле, а не в сессии
+  браузера — переживает перезапуски.
 
 ## Установка
 
@@ -86,7 +91,7 @@ bukmeker/
       sync.py                — sync_registry_from_matches: слияние live-данных в реестр
     dashboard.py        — Streamlit-дашборд (все вкладки: спорт/купон/сущности)
     cli.py             — `bukmeker demo`, `bukmeker connector [--sync]`, `bukmeker dashboard`
-  tests/               — 215 unit-тестов; сетевые/AI-вызовы и дашборд протестированы
+  tests/               — 233 unit-тестов; сетевые/AI-вызовы и дашборд протестированы
                           через инжектируемые фейки и headless AppTest, без реальных
                           запросов, трат или браузера
   demo.py              — тонкая обёртка над bukmeker.cli.main(["demo"])
@@ -96,7 +101,7 @@ bukmeker/
 ## Запуск
 
 ```bash
-pytest tests/ -q        # 215 passed
+pytest tests/ -q        # 233 passed
 bukmeker demo             # сквозная синтетическая демонстрация (после pip install -e .)
 bukmeker dashboard         # веб-дашборд в браузере (http://localhost:8501)
 python demo.py             # то же самое без установки пакета
