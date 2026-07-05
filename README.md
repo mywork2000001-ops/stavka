@@ -18,9 +18,12 @@ Postgres/Docker, реальные платежи) в этот пакет не в
 
 - **Мультиспорт**: футбол (Poisson/Dixon-Coles), баскетбол (Normal margin/total),
   теннис (race-to-N-sets) — единый интерфейс вероятностей исхода для всех трёх.
-- **Мультистрана/мультилига**: универсальная схема `Sport → Country → League →
-  Competitor`, не привязанная к конкретному списку клубов — реальное покрытие
-  достигается через коннекторы данных, а не хардкод (см. `entities.py`).
+- **Мультистрана/мультилига**: полный реальный список из 249 стран мира (ISO
+  3166-1 через `pycountry`), плюс курируемые реальные лиги/клубы для ~35
+  футбольных стран, вся NBA (30 команд) и топ ATP-игроков (см. `entities.py`).
+- **Синхронизация через API-ключ**: `bukmeker connector --sync` сливает
+  реальные данные, полученные AI-коннектором от любого провайдера, прямо в
+  реестр сущностей (лиги/клубы) — идемпотентно, без дублей при повторном запуске.
 - **Value detection & bankroll**: EV, Value%, снятие маржи (Shin), фракционный
   Kelly, генератор купонов с ограничением по корреляции исходов.
 - **Монетизация купона**: расчёт общего коэффициента, выплаты, комиссии
@@ -57,7 +60,8 @@ bukmeker/
   bukmeker/
     features.py       — экспоненциальное затухание, EMA, взвешенное скользящее среднее
     ratings.py         — Elo, байесовский рейтинг, Poisson attack/defence (MLE)
-    entities.py        — Sport/Country/League/Competitor + seed-реестр (5 стран, 3 спорта)
+    entities.py        — Sport/Country/League/Competitor + seed-реестр (249 реальных
+                          стран через pycountry, ~35 футбольных лиг, вся NBA, топ ATP)
     models/goals.py    — Poisson, бивариатный Poisson, Dixon-Coles, Negative Binomial,
                           Skellam, Monte-Carlo
     sports/
@@ -74,9 +78,10 @@ bukmeker/
       raw_source.py        — RawDataSource: generic HTTP-клиент по API-ключу
       ai_mapper.py          — ClaudeFieldMapper: реальный вызов Anthropic API
       ai_connector.py        — AIDataConnector: fetch + normalize
+      sync.py                — sync_registry_from_matches: слияние live-данных в реестр
     dashboard.py        — Streamlit-дашборд (все вкладки: спорт/купон/сущности)
-    cli.py             — `bukmeker demo`, `bukmeker connector`, `bukmeker dashboard`
-  tests/               — 111 unit-теста; сетевые/AI-вызовы и дашборд протестированы
+    cli.py             — `bukmeker demo`, `bukmeker connector [--sync]`, `bukmeker dashboard`
+  tests/               — 130 unit-тестов; сетевые/AI-вызовы и дашборд протестированы
                           через инжектируемые фейки и headless AppTest, без реальных
                           запросов, трат или браузера
   demo.py              — тонкая обёртка над bukmeker.cli.main(["demo"])
@@ -86,7 +91,7 @@ bukmeker/
 ## Запуск
 
 ```bash
-pytest tests/ -q        # 111 passed
+pytest tests/ -q        # 130 passed
 bukmeker demo             # сквозная синтетическая демонстрация (после pip install -e .)
 bukmeker dashboard         # веб-дашборд в браузере (http://localhost:8501)
 python demo.py             # то же самое без установки пакета
@@ -113,9 +118,10 @@ bukmeker dashboard              # открывает http://localhost:8501 в б
 **⚽ Футбол / 🏀 Баскетбол / 🎾 Теннис** (вероятности исхода на ползунках и
 полях ввода коэффициентов, с расчётом EV/Value%/Kelly — у каждого поля
 всплывающая подсказка), **🎫 Купон и монетизация** (редактируемая таблица
-ставок → генерация купонов → отчёт по выплате), **🌍 Страны и лиги** (просмотр
-seed-реестра) и **ℹ️ О проекте** (границы объёма). Это тот же движок, что и в
-`bukmeker demo` — просто с виджетами и подсказками вместо чтения кода.
+ставок → генерация купонов → отчёт по выплате), **🌍 Страны и лиги** (все 249
+реальных стран мира + честная метка, для каких из них есть данные по лигам/
+клубам, а для каких — нет) и **ℹ️ О проекте** (границы объёма). Это тот же
+движок, что и в `bukmeker demo` — просто с виджетами и подсказками вместо чтения кода.
 
 По умолчанию дашборд открыт без пароля (с предупреждением на экране) — это
 режим для локального использования на своей машине. Чтобы закрыть доступ
@@ -157,6 +163,32 @@ mapper = ClaudeFieldMapper(api_key="ANTHROPIC_KEY")
 matches = AIDataConnector(source, mapper).fetch_and_normalize("fixtures")
 ```
 
+### Синхронизация реестра сущностей (`--sync`)
+
+`bukmeker connector --sync` дополнительно сливает полученные лиги/команды в
+реестр сущностей (`bukmeker.entities`) — это и есть механизм пополнения
+системы реальными данными через API-ключ, вместо ручного добавления записей
+в код:
+
+```bash
+bukmeker connector --source-url ... --path fixtures \
+  --sync --sync-sport Football --sync-country GBR
+```
+
+Идемпотентно (повторный запуск с теми же данными не создаёт дублей: лиги
+матчатся по названию+виду спорта, команды — по названию+лиге). `--sync-country`
+нужен потому, что данные о матчах обычно не содержат страну лиги — без этого
+флага новую лигу было бы не к чему честно привязать. Программно:
+
+```python
+from bukmeker.connectors import sync_registry_from_matches
+from bukmeker.entities import build_seed_registry
+
+registry = build_seed_registry()
+report = sync_registry_from_matches(registry, matches, sport_id=1, fallback_country_id=usa_country_id)
+print(report.leagues_added, report.competitors_added)
+```
+
 ## Монетизация купона
 
 ```python
@@ -171,5 +203,6 @@ print(format_coupon_report(report))
 ## Область проекта
 
 См. «Явные ограничения текущего объёма» в [PROMPT.md](PROMPT.md): без backend/БД/
-очередей/фронтенда/инфраструктуры, без реальных платежей, seed-данные по странам
-и клубам иллюстративны (не исчерпывающий список).
+очередей/фронтенда/инфраструктуры, без реальных платежей. Список стран — реальный
+и полный (249, ISO 3166-1); лиги/клубы — курируемая, реальная, но не исчерпывающая
+подборка (полное покрытие по конкретному провайдеру — через `--sync`).

@@ -353,22 +353,61 @@ def render_coupon_page() -> None:
 
 def render_entities_page() -> None:
     st.title("🌍 Страны и лиги")
-    st.caption(
-        "Иллюстративный seed-реестр (не полный список клубов мира) — реальное покрытие "
-        "достигается через AI-коннектор данных (см. USAGE.md, раздел 9)."
-    )
     reg = build_seed_registry()
+    countries_with_data = sum(1 for c in reg.countries.values() if reg.has_league_data(c.id))
 
-    sport_names = {s.id: s.name for s in reg.sports.values()}
-    sport_id = st.selectbox("Вид спорта", options=list(sport_names), format_func=lambda i: sport_names[i])
+    m1, m2 = st.columns(2)
+    m1.metric(
+        "Стран в системе (реальный список ISO)", len(reg.countries),
+        help="Полный официальный список стран/территорий ISO 3166-1 — это все страны мира, не подмножество.",
+    )
+    m2.metric(
+        "Стран с данными по лигам/клубам", countries_with_data,
+        help="Курируемая, реальная, но не исчерпывающая подборка — не путать со списком всех стран слева.",
+    )
+    st.caption(
+        "Список стран — полный и настоящий (ISO 3166-1). А вот лиги и клубы — курируемая подборка "
+        "известных реальных турниров/команд, а не исчерпывающая база каждого клуба каждой страны — "
+        "получить действительно полное покрытие можно через AI-коннектор данных (см. страницу «Справка», "
+        "раздел про AI-коннектор, или USAGE.md, раздел 9)."
+    )
 
-    leagues = reg.leagues_for_sport(sport_id)
-    league_names = {lg.id: lg.name for lg in leagues}
-    league_id = st.selectbox("Лига", options=list(league_names), format_func=lambda i: league_names[i])
+    mode = st.radio("Смотреть по:", ["Виду спорта", "Стране"], horizontal=True)
 
-    competitors = reg.competitors_for_league(league_id)
-    df = pd.DataFrame([{"Участник": c.name, "Тип": c.kind.value} for c in competitors])
-    st.dataframe(df, width="stretch", hide_index=True)
+    if mode == "Виду спорта":
+        sport_names = {s.id: s.name for s in reg.sports.values()}
+        sport_id = st.selectbox("Вид спорта", options=list(sport_names), format_func=lambda i: sport_names[i])
+
+        leagues = reg.leagues_for_sport(sport_id)
+        league_names = {lg.id: lg.name for lg in leagues}
+        league_id = st.selectbox("Лига", options=list(league_names), format_func=lambda i: league_names[i])
+
+        competitors = reg.competitors_for_league(league_id)
+        df = pd.DataFrame([{"Участник": c.name, "Тип": c.kind.value} for c in competitors])
+        st.dataframe(df, width="stretch", hide_index=True)
+    else:
+        countries = reg.all_countries_sorted()
+        country_names = {c.id: f"{c.name} ({c.iso_code})" for c in countries}
+        country_id = st.selectbox(
+            "Страна (полный список из 249 стран мира)",
+            options=list(country_names), format_func=lambda i: country_names[i],
+            key="entities_country_select",
+        )
+
+        leagues = reg.leagues_for_country(country_id)
+        if not leagues:
+            st.info(
+                "Для этой страны в seed-реестре пока нет лиг/клубов — это ожидаемо для "
+                "большинства из 249 стран (курируемая подборка, не полная база). Реальные "
+                "живые данные по любой стране можно получить через AI-коннектор "
+                "(`bukmeker connector`)."
+            )
+        else:
+            for league in leagues:
+                st.markdown(f"**{league.name}** ({reg.sport_of_league(league.id).name})")
+                competitors = reg.competitors_for_league(league.id)
+                df = pd.DataFrame([{"Участник": c.name, "Тип": c.kind.value} for c in competitors])
+                st.dataframe(df, width="stretch", hide_index=True)
 
 
 def render_about_page() -> None:

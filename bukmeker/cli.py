@@ -169,6 +169,32 @@ def run_connector(args: argparse.Namespace) -> int:
     for m in matches:
         print(f"  {m.home_team!r} vs {m.away_team!r}  odds(H/D/A)="
               f"{m.home_odds}/{m.draw_odds}/{m.away_odds}  start={m.start_time}")
+
+    if args.sync:
+        from bukmeker.connectors import sync_registry_from_matches
+        from bukmeker.entities import build_seed_registry
+
+        registry = build_seed_registry()
+        try:
+            sport_id = next(
+                s.id for s in registry.sports.values() if s.name.lower() == args.sync_sport.lower()
+            )
+        except StopIteration:
+            known = ", ".join(s.name for s in registry.sports.values())
+            print(f"Unknown --sync-sport {args.sync_sport!r}. Known sports: {known}")
+            return 1
+        try:
+            country_id = registry.country_by_alpha3(args.sync_country.upper()).id
+        except StopIteration:
+            print(f"Unknown --sync-country ISO alpha-3 code {args.sync_country!r}")
+            return 1
+
+        report = sync_registry_from_matches(registry, matches, sport_id=sport_id, fallback_country_id=country_id)
+        print(
+            f"\nSync into entity registry: +{report.leagues_added} league(s), "
+            f"+{report.competitors_added} competitor(s) from {report.matches_processed} match(es) "
+            f"({report.skipped_incomplete} skipped -- missing team names)."
+        )
     return 0
 
 
@@ -210,6 +236,18 @@ def main(argv: list[str] | None = None) -> int:
     connector_parser.add_argument("--key-location", choices=["header", "query"], default="header")
     connector_parser.add_argument("--key-name", default="x-api-key")
     connector_parser.add_argument("--model", default="claude-sonnet-5")
+    connector_parser.add_argument(
+        "--sync", action="store_true",
+        help="Also merge the fetched leagues/teams into the entity registry (bukmeker.entities)",
+    )
+    connector_parser.add_argument(
+        "--sync-sport", default="football",
+        help="Which sport (by name: Football/Basketball/Tennis) newly synced leagues belong to",
+    )
+    connector_parser.add_argument(
+        "--sync-country", default="USA",
+        help="ISO alpha-3 code to place newly discovered leagues under (matches have no country field)",
+    )
 
     dashboard_parser = subparsers.add_parser(
         "dashboard", help="Launch the interactive web dashboard (Streamlit) in your browser"

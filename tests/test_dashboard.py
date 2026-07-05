@@ -84,10 +84,42 @@ def test_coupon_page_monetization_metrics_match_worked_example():
     assert metrics["Чистая выплата"] == "541.50"
 
 
-def test_entities_page_shows_non_empty_competitor_table():
+def test_entities_page_shows_non_empty_competitor_table_by_default():
     at = _booted("entities")
     assert len(at.dataframe) == 1
     assert len(at.dataframe[0].value) > 0
+
+
+def test_entities_page_reports_all_249_real_countries():
+    at = _booted("entities")
+    metrics = {m.label: m.value for m in at.metric}
+    assert metrics["Стран в системе (реальный список ISO)"] == "249"
+    # curated real subset, not exhaustive -- must be far fewer than 249
+    assert int(metrics["Стран с данными по лигам/клубам"]) < 249
+
+
+def test_entities_page_country_mode_shows_honest_no_data_message_by_default():
+    at = _booted("entities")
+    at.radio[0].set_value("Стране").run(timeout=30)
+    assert not at.exception
+    # alphabetically-first countries (e.g. Afghanistan) have no seeded league data
+    assert len(at.info) == 1
+
+
+def test_entities_page_country_mode_shows_leagues_for_a_seeded_country():
+    from bukmeker.entities import build_seed_registry
+
+    usa_id = build_seed_registry().country_by_alpha3("USA").id
+
+    at = _booted("entities")
+    at.radio[0].set_value("Стране").run(timeout=30)
+    at.session_state["entities_country_select"] = usa_id
+    at.run(timeout=30)
+
+    assert not at.exception
+    assert len(at.info) == 0
+    league_names = " ".join(m.value for m in at.markdown)
+    assert "MLS" in league_names
 
 
 def test_help_page_contains_glossary_terms():
