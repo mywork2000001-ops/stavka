@@ -28,6 +28,8 @@ Postgres/Docker, реальные платежи) в этот пакет не в
 - **AI-коннектор данных**: подключите любой источник спортивных данных своим
   API-ключом — Anthropic API реально сопоставляет незнакомую JSON-схему
   провайдера с канонической схемой платформы.
+- **Веб-дашборд** (`bukmeker dashboard`): интерактивное приложение в браузере
+  поверх той же математики — без командной строки и без чтения кода.
 
 ## Установка
 
@@ -38,7 +40,10 @@ pip install -e .
 # + AI-коннектор данных (Anthropic SDK + requests)
 pip install -e ".[connectors]"
 
-# + инструменты разработки (pytest, ruff) — включает connectors
+# + веб-дашборд (Streamlit)
+pip install -e ".[dashboard]"
+
+# + инструменты разработки (pytest, ruff) — включает connectors и dashboard
 pip install -e ".[dev]"
 ```
 
@@ -46,7 +51,7 @@ pip install -e ".[dev]"
 
 ```
 bukmeker/
-  pyproject.toml    — сборка (setuptools), entry point `bukmeker`, extras [connectors, dev]
+  pyproject.toml    — сборка (setuptools), entry point `bukmeker`, extras [connectors, dashboard, dev]
   USAGE.md           — пошаговая инструкция по использованию
   .github/workflows/ci.yml — CI: ruff + pytest на Python 3.11 и 3.12
   bukmeker/
@@ -69,17 +74,21 @@ bukmeker/
       raw_source.py        — RawDataSource: generic HTTP-клиент по API-ключу
       ai_mapper.py          — ClaudeFieldMapper: реальный вызов Anthropic API
       ai_connector.py        — AIDataConnector: fetch + normalize
-    cli.py             — `bukmeker demo`, `bukmeker connector`
-  tests/               — 96 unit-тестов; сетевые/AI-вызовы протестированы через
-                          инжектируемые фейки, без реальных запросов и трат
+    dashboard.py        — Streamlit-дашборд (все вкладки: спорт/купон/сущности)
+    cli.py             — `bukmeker demo`, `bukmeker connector`, `bukmeker dashboard`
+  tests/               — 101 unit-тест; сетевые/AI-вызовы и дашборд протестированы
+                          через инжектируемые фейки и headless AppTest, без реальных
+                          запросов, трат или браузера
   demo.py              — тонкая обёртка над bukmeker.cli.main(["demo"])
+  dashboard_app.py     — точка входа для `streamlit run dashboard_app.py`
 ```
 
 ## Запуск
 
 ```bash
-pytest tests/ -q        # 96 passed
+pytest tests/ -q        # 101 passed
 bukmeker demo             # сквозная синтетическая демонстрация (после pip install -e .)
+bukmeker dashboard         # веб-дашборд в браузере (http://localhost:8501)
 python demo.py             # то же самое без установки пакета
 ruff check .                # линт (используется в CI)
 ```
@@ -91,6 +100,19 @@ ruff check .                # линт (используется в CI)
 вероятности → снятие маржи букмекера (Shin) → обнаружение value bet (EV, Value%) →
 half-Kelly стейк → генерация купона из нескольких матчей с фильтрацией по
 корреляции → баскетбол и теннис тем же движком → монетизация лучшего купона.
+
+## Веб-дашборд (`bukmeker dashboard`)
+
+```bash
+pip install -e ".[dashboard]"
+bukmeker dashboard              # открывает http://localhost:8501 в браузере
+```
+
+Шесть вкладок: Футбол, Баскетбол, Теннис (вероятности исхода на ползунках и
+полях ввода коэффициентов, с расчётом EV/Value%/Kelly), Купон и монетизация
+(редактируемая таблица ставок → генерация купонов → отчёт по выплате), Страны/
+лиги (просмотр seed-реестра) и «О проекте» (границы объёма). Это тот же
+движок, что и в `bukmeker demo` — просто с виджетами вместо чтения кода.
 
 ## AI-коннектор данных (`bukmeker connector`)
 

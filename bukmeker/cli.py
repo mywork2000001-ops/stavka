@@ -172,6 +172,26 @@ def run_connector(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_dashboard(args: argparse.Namespace) -> int:
+    """Launches the Streamlit web dashboard (bukmeker/dashboard.py) as a
+    subprocess -- opens in the browser like a real application, backed by the
+    same tested library functions as `demo`."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    if shutil.which("streamlit") is None:
+        print(
+            'Streamlit is not installed. Install it with: pip install -e ".[dashboard]"\n'
+            "Then run: bukmeker dashboard"
+        )
+        return 1
+
+    dashboard_path = Path(__file__).resolve().parent / "dashboard.py"
+    cmd = ["streamlit", "run", str(dashboard_path), "--server.port", str(args.port)]
+    return subprocess.call(cmd)
+
+
 def main(argv: list[str] | None = None) -> int:
     if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
         sys.stdout.reconfigure(encoding="utf-8")
@@ -191,12 +211,19 @@ def main(argv: list[str] | None = None) -> int:
     connector_parser.add_argument("--key-name", default="x-api-key")
     connector_parser.add_argument("--model", default="claude-sonnet-5")
 
+    dashboard_parser = subparsers.add_parser(
+        "dashboard", help="Launch the interactive web dashboard (Streamlit) in your browser"
+    )
+    dashboard_parser.add_argument("--port", type=int, default=8501)
+
     args = parser.parse_args(argv)
     if args.command == "demo":
         run_demo()
         return 0
     if args.command == "connector":
         return run_connector(args)
+    if args.command == "dashboard":
+        return run_dashboard(args)
     return 0
 
 

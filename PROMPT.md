@@ -96,13 +96,15 @@ Kelly Overbetting, Small Sample Bias, Correlation Risk, Closing Line Bias.
 ### Структура пакета
 ```
 bukmeker/                    # корень проекта (pip-устанавливаемый пакет)
-├── pyproject.toml           # setuptools build, entry point `bukmeker`, extras [connectors, dev]
+├── pyproject.toml           # setuptools build, entry point `bukmeker`, extras [connectors, dashboard, dev]
 ├── LICENSE                  # MIT
 ├── .gitignore
 ├── .github/workflows/ci.yml # GitHub Actions: ruff + pytest на 3.11 и 3.12
 ├── README.md
+├── USAGE.md                  # пошаговая инструкция по использованию
 ├── PROMPT.md                # этот файл
 ├── demo.py                  # тонкая обёртка над bukmeker.cli.main(["demo"])
+├── dashboard_app.py           # точка входа для `streamlit run dashboard_app.py`
 ├── bukmeker/                # импортируемый пакет
 │   ├── features.py          # exponential_weight, weighted_rolling_mean, ema, home_advantage_score
 │   ├── ratings.py            # elo_expected_score, elo_update, BayesianRating, PoissonStrength
@@ -125,8 +127,9 @@ bukmeker/                    # корень проекта (pip-устанавл
 │   │   ├── raw_source.py            # RawDataSource — generic HTTP-клиент по API-ключу
 │   │   ├── ai_mapper.py              # ClaudeFieldMapper — реальный вызов Anthropic API
 │   │   └── ai_connector.py            # AIDataConnector — fetch + normalize
-│   └── cli.py                  # argparse CLI: `bukmeker demo`, `bukmeker connector`
-└── tests/                    # 96 unit-тестов, по одному файлу на модуль
+│   ├── dashboard.py              # Streamlit-дашборд: 6 вкладок поверх тех же функций
+│   └── cli.py                  # argparse CLI: `bukmeker demo`, `connector`, `dashboard`
+└── tests/                    # 101 unit-тест, по одному файлу на модуль (+ headless AppTest для дашборда)
 ```
 
 ### Ключевые инженерные решения и их обоснование
@@ -192,6 +195,33 @@ bukmeker/                    # корень проекта (pip-устанавл
   (печатает usage и возвращает код 1) — никакого синтетического fallback,
   который мог бы создать иллюзию, что данные реальны, когда это не так.
 
+### Ключевые инженерные решения v3 (веб-дашборд)
+- Изначальный запрос был "открыть как приложение"; уточнение с пользователем
+  показало, что имелся в виду не установочный `.exe`/desktop-окно, а
+  интерактивный интерфейс в браузере — выбран **Streamlit** как самый быстрый
+  путь к рабочему UI без Node/React, при этом визуально ближе всего к
+  дашборду, описанному в исходном `bukmeker.txt` §1.2 ("Frontend — Дашборды").
+- **`bukmeker/dashboard.py` не содержит своей математики** — каждая вкладка
+  только вызывает уже протестированные функции (`margin`, `models`,
+  `value_betting`, `sports`, `coupon`, `monetization`, `entities`) и рендерит
+  результат. Это гарантирует, что дашборд не может разойтись с CLI/API по
+  цифрам — числа в разделе "Купон и монетизация" дашборда идентичны
+  `bukmeker demo` для тех же входных данных (проверено тестом).
+- **`bukmeker dashboard` CLI** — не встроенный сервер, а `subprocess.call(["streamlit",
+  "run", ...])`; если `streamlit` не установлен (`shutil.which` не находит
+  бинарник), печатает инструкцию по установке extras вместо трейсбека.
+- **Границы ввода на UI явно обработаны, а не понадеялись на "пользователь не
+  ошибётся"**: коэффициенты без букмекерской маржи (`shin_margin_removal`
+  бросает `ValueError`) перехватываются на дашборде и показываются как
+  предупреждение (`st.warning`), а не роняют страницу — реальный сценарий,
+  так как пользователь свободно двигает числовые поля.
+- **Тестирование без браузера**: `streamlit.testing.v1.AppTest` прогоняет
+  `dashboard_app.py` headless, проверяет отсутствие исключений на старте,
+  переключение на вкладку купонов, клик по кнопке генерации и совпадение
+  цифр монетизации с ручным расчётом (570/28.50/541.50) — тот же уровень
+  проверки, что и у чисто библиотечного кода, без ручного клика для каждой
+  правки.
+
 ### Явные ограничения текущего объёма
 - Node.js backend, Prisma/PostgreSQL/TimescaleDB, RabbitMQ, React-фронтенд, Docker
   Compose/Kubernetes и мониторинг (Prometheus/Grafana) из `bukmeker.txt` §1.2
@@ -208,3 +238,7 @@ bukmeker/                    # корень проекта (pip-устанавл
   connector` и `ClaudeFieldMapper` при реальном использовании выполняют платный
   вызов Anthropic API и HTTP-запрос к стороннему провайдеру — это не бесплатная
   и не офлайн операция, в отличие от `bukmeker demo`.
+- **Дашборд — локальный однопользовательский dev-сервер.** `bukmeker dashboard`
+  запускает Streamlit без аутентификации, без multi-tenant изоляции и без
+  production-развёртывания (reverse proxy, HTTPS, масштабирование) — подходит
+  для локального использования и демонстраций, не для публичного хостинга.
