@@ -57,6 +57,15 @@ class PoissonStrength:
     home_adv: float = field(default=0.0)
     attack: dict = field(default_factory=dict)
     defence: dict = field(default_factory=dict)
+    # Teams that actually appeared in the fitted data -- NOT the same as
+    # `attack`/`defence` having a key for them. `teams` (the full roster) gets
+    # an attack/defence entry for every name regardless of whether it was
+    # ever observed (the ridge penalty just shrinks unobserved teams to ~0,
+    # i.e. "average"), so `"X" in fitted.attack` is true even for a team the
+    # model has never seen a single match for. Callers that need to know
+    # "does this rating actually mean anything" (backtesting, live scanning)
+    # must check `observed_teams`, not `attack`/`defence` membership.
+    observed_teams: frozenset = field(default_factory=frozenset)
 
     @classmethod
     def fit(
@@ -108,6 +117,7 @@ class PoissonStrength:
             home_adv=float(home_adv),
             attack={t: float(attack[i]) for t, i in idx.items()},
             defence={t: float(defence[i]) for t, i in idx.items()},
+            observed_teams=frozenset(set(home_ids) | set(away_ids)),
         )
 
     def expected_goals(self, home_team: str, away_team: str) -> tuple[float, float]:

@@ -26,6 +26,7 @@ import streamlit as st
 from bukmeker.auth import require_password
 from bukmeker.coupon import ValueBetCandidate, generate_coupons
 from bukmeker.entities import build_seed_registry
+from bukmeker.live_predictions import scan_fixtures_for_value
 from bukmeker.margin import shin_margin_removal
 from bukmeker.models import dixon_coles_matrix, outcome_probs_from_matrix
 from bukmeker.monetization import build_coupon_report, format_coupon_report
@@ -820,6 +821,7 @@ def render_connector_page() -> None:
                 )
                 mapper = ClaudeFieldMapper(api_key=anthropic_key, model=model)
                 matches = AIDataConnector(source, mapper).fetch_and_normalize(path)
+                st.session_state["connector_last_matches"] = matches
 
                 st.success(f"Получено и нормализовано записей: {len(matches)}")
                 if matches:
@@ -848,6 +850,142 @@ def render_connector_page() -> None:
                     )
             except Exception as exc:  # noqa: BLE001 -- surfaced to the user, secrets redacted first
                 st.error(f"Ошибка: {_redact(str(exc), source_key, anthropic_key)}")
+
+    st.divider()
+    _render_model_training_section(source_url, source_key, key_location, key_name, anthropic_key, model)
+    _render_auto_coupon_section()
+
+
+def _render_model_training_section(source_url, source_key, key_location, key_name, anthropic_key, model) -> None:
+    st.subheader("📈 Обучение модели на истории результатов")
+    st.caption(
+        "Здесь модель считает λ_home/λ_away сама, по реальным прошлым результатам, вместо "
+        "ручного ввода на странице Футбол. Бэктест на отложенной части истории — ОБЯЗАТЕЛЬНОЕ "
+        "условие до использования модели для реальных ставок (см. bukmeker.txt §3.8: overfitting, "
+        "look-ahead bias, small sample bias — типичные способы обмануть самого себя)."
+    )
+    c1, c2 = st.columns(2)
+    history_path = c1.text_input(
+        "Endpoint истории результатов", value="results",
+        help="Путь к эндпоинту с ЗАВЕРШЁННЫМИ матчами (нужны итоговые счёта, не будущие коэффициенты).",
+    )
+    train_league_id = c2.number_input(
+        "ID лиги для обученной модели", min_value=1, value=1, step=1,
+        help="Произвольный номер, которым будут помечены найденные value bets этой модели.",
+    )
+
+    if st.button("Обучить и провалидировать модель (backtest)", key="connector_train_button"):
+        if not source_url or not source_key or not anthropic_key:
+            st.error("Заполните URL провайдера, ключ провайдера и ключ Anthropic выше — все три обязательны.")
+        else:
+            try:
+                from bukmeker.backtest import backtest_poisson_ratings
+                from bukmeker.connectors import ClaudeFieldMapper, RawDataSource
+                from bukmeker.connectors.ai_connector import AIDataConnector
+                from bukmeker.connectors.historical import (
+                    HISTORICAL_FIELDS,
+                    apply_historical_mapping,
+                    to_rating_arrays,
+                )
+
+                source = RawDataSource(
+                    base_url=source_url, api_key=source_key, key_location=key_location, key_name=key_name
+                )
+                mapper = ClaudeFieldMapper(api_key=anthropic_key, model=model, target_fields=HISTORICAL_FIELDS)
+                connector = AIDataConnector(source, mapper, apply_fn=apply_historical_mapping)
+                historical_matches = connector.fetch_and_normalize(history_path)
+
+                home_ids, away_ids, home_goals, away_goals, teams = to_rating_arrays(historical_matches)
+                fitted, metrics = backtest_poisson_ratings(home_ids, away_ids, home_goals, away_goals, teams)
+
+                st.session_state["fitted_model"] = fitted
+                st.session_state["fitted_model_league_id"] = int(train_league_id)
+                st.session_state["fitted_model_metrics"] = metrics
+
+                st.success(
+                    f"Модель обучена на {metrics['n_train']} матчах ({len(teams)} команд), "
+                    f"проверена на {metrics['n_test']} отложенных."
+                )
+                metrics_df = pd.DataFrame(
+                    [{"Метрика": k, "Значение": round(v, 4)} for k, v in metrics.items()]
+                )
+                st.dataframe(metrics_df, width="stretch", hide_index=True)
+
+                if metrics["roc_auc"] <= 0.55:
+                    st.warning(
+                        "ROC-AUC на отложенных данных близок к случайному (0.5) — модель не "
+                        "показывает предсказательной силы. Использовать её для реальных ставок "
+                        "не рекомендуется: нужно больше истории или другая модель."
+                    )
+            except Exception as exc:  # noqa: BLE001 -- surfaced to the user, secrets redacted first
+                st.error(f"Ошибка: {_redact(str(exc), source_key, anthropic_key)}")
+
+
+def _render_auto_coupon_section() -> None:
+    st.divider()
+    st.subheader("🤖 Автоматическая генерация купонов")
+    fitted = st.session_state.get("fitted_model")
+    if fitted is None:
+        st.info("Сначала обучите модель выше ('Обучить и провалидировать модель') — купоны "
+                "генерируются на основе её вероятностей, а не вручную введённых чисел.")
+        return
+
+    fixtures = st.session_state.get("connector_last_matches")
+    st.caption(
+        "Использует матчи, полученные кнопкой «Получить и нормализовать данные» выше "
+        "(нужны коэффициенты 1X2), и вероятности обученной модели — находит исходы с "
+        "положительным EV и сразу собирает из них купоны."
+    )
+    if not fixtures:
+        st.info("Сначала нажмите «Получить и нормализовать данные» выше, чтобы получить "
+                "предстоящие матчи с коэффициентами.")
+        return
+
+    c1, c2, c3, c4 = st.columns(4)
+    min_ev = c1.slider("Мин. EV для value bet", 0.0, 0.5, 0.0, 0.01, key="auto_min_ev")
+    bankroll = c2.number_input("Банкролл", min_value=1.0, value=10_000.0, step=100.0, key="auto_bankroll")
+    max_events = c3.slider("Макс. ног в купоне", 1, 5, 3, key="auto_max_events")
+    kelly_fraction = c4.slider("Доля Kelly", 0.1, 1.0, 0.5, 0.05, key="auto_kelly")
+
+    if st.button("🎯 Найти value bets и сгенерировать купоны", key="auto_generate_button", type="primary"):
+        league_id = st.session_state.get("fitted_model_league_id", 1)
+        candidates = scan_fixtures_for_value(fitted, fixtures, league_id=league_id, min_ev=min_ev)
+
+        if not candidates:
+            st.info("Модель не нашла ни одного исхода с положительным EV среди полученных матчей.")
+            return
+
+        try:
+            coupons = generate_coupons(
+                candidates, bankroll=bankroll, max_events=max_events, max_corr=0.3,
+                kelly_fraction=kelly_fraction, top_n=5,
+            )
+        except ValueError as exc:
+            st.error(f"Слишком много комбинаций для перебора: {exc}")
+            return
+
+        st.success(f"Найдено {len(candidates)} value bet(s), сгенерировано {len(coupons)} купон(ов).")
+
+        def _team_name(team_id: int) -> str:
+            index = team_id - 1
+            return fitted.teams[index] if 0 <= index < len(fitted.teams) else f"#{team_id}"
+
+        auto_df = pd.DataFrame(
+            [
+                {
+                    "legs": ", ".join(
+                        f"{_team_name(b.team_ids[0])} vs {_team_name(b.team_ids[1])}" for b in c["combo"]
+                    ),
+                    "n_legs": c["n_legs"],
+                    "joint_prob": round(c["joint_prob"], 4),
+                    "joint_odds": round(c["joint_odds"], 2),
+                    "EV": round(c["ev"], 4),
+                    "Kelly stake": round(c["stake"], 2),
+                }
+                for c in coupons
+            ]
+        )
+        st.dataframe(auto_df, width="stretch", hide_index=True)
 
 
 def render_about_page() -> None:

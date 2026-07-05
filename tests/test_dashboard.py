@@ -487,3 +487,225 @@ def test_coupon_page_clear_history_button_empties_the_log():
     at = _click(at, "🗑️ Очистить историю купонов")
     assert not at.exception
     assert at.session_state["coupon_history"] == []
+
+
+class _FakeSchemaAwareAnthropicClient:
+    """Returns a different field mapping depending on which canonical schema
+    the system prompt is targeting (betting-odds vs historical-results) --
+    needed because the connector page now builds two different
+    ClaudeFieldMapper instances for two different purposes."""
+
+    def __init__(self, api_key=None):
+        self.messages = self
+
+    def create(self, **kwargs):
+        system = kwargs["system"]
+        if "home_goals" in system:
+            mapping = {
+                "match_id": None, "league": None, "home_team": "teams.home",
+                "away_team": "teams.away", "date": None,
+                "home_goals": "score.home", "away_goals": "score.away",
+            }
+        else:
+            mapping = {
+                "match_id": None, "sport": None, "league": None,
+                "home_team": "teams.home", "away_team": "teams.away", "start_time": None,
+                "home_odds": "odds.home", "draw_odds": "odds.draw", "away_odds": "odds.away",
+            }
+        return _FakeAnthropicMessage(json.dumps(mapping))
+
+
+def _synthetic_history_payload(n=120, seed=0):
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    teams = ["Strong", "Weak", "Mid"]
+    true_attack = {"Strong": 0.6, "Weak": -0.5, "Mid": 0.0}
+    records = []
+    for _ in range(n):
+        h, a = rng.choice(teams, size=2, replace=False)
+        lam_h = float(np.exp(0.5 + true_attack[h]))
+        lam_a = float(np.exp(0.3 + true_attack[a]))
+        records.append(
+            {
+                "teams": {"home": h, "away": a},
+                "score": {"home": int(rng.poisson(lam_h)), "away": int(rng.poisson(lam_a))},
+            }
+        )
+    return {"response": records}
+
+
+def _fake_get_by_path(fixtures_payload, history_payload):
+    def fake_get(url, headers=None, params=None, timeout=None):
+        class _Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return history_payload if "results" in url else fixtures_payload
+
+        return _Resp()
+
+    return fake_get
+
+
+def test_connector_page_trains_model_and_shows_backtest_metrics(monkeypatch):
+    monkeypatch.setattr(
+        "bukmeker.connectors.raw_source.requests.get",
+        _fake_get_by_path({"response": []}, _synthetic_history_payload()),
+    )
+    monkeypatch.setattr("anthropic.Anthropic", _FakeSchemaAwareAnthropicClient)
+
+    at = _booted("connector")
+    inputs = {ti.label: ti for ti in at.text_input}
+    inputs["Base URL провайдера"].set_value("https://provider.example.com")
+    inputs["API-ключ провайдера"].set_value("SRC_KEY")
+    inputs["Anthropic API-ключ"].set_value("ANTH_KEY")
+    at.run(timeout=30)
+
+    at = _click(at, "Обучить и провалидировать модель (backtest)")
+    assert not at.exception
+    assert len(at.success) == 1
+    assert "fitted_model" in at.session_state
+    assert at.session_state["fitted_model_metrics"]["n_test"] > 0
+
+
+def test_connector_page_auto_generates_coupon_from_trained_model_and_fixtures(monkeypatch):
+    fixtures_payload = {
+        "response": [
+            {
+                "teams": {"home": "Strong", "away": "Weak"},
+                "odds": {"home": "2.20", "draw": "3.40", "away": "5.00"},
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "bukmeker.connectors.raw_source.requests.get",
+        _fake_get_by_path(fixtures_payload, _synthetic_history_payload()),
+    )
+    monkeypatch.setattr("anthropic.Anthropic", _FakeSchemaAwareAnthropicClient)
+
+    at = _booted("connector")
+    inputs = {ti.label: ti for ti in at.text_input}
+    inputs["Base URL провайдера"].set_value("https://provider.example.com")
+    inputs["API-ключ провайдера"].set_value("SRC_KEY")
+    inputs["Anthropic API-ключ"].set_value("ANTH_KEY")
+    at.run(timeout=30)
+
+    at = _click(at, "Получить и нормализовать данные")
+    at = _click(at, "Обучить и провалидировать модель (backtest)")
+    at = _click(at, "🎯 Найти value bets и сгенерировать купоны")
+
+    assert not at.exception
+    coupon_tables = [df for df in at.dataframe if "joint_odds" in df.value.columns]
+    assert len(coupon_tables) == 1
+    assert "Strong" in coupon_tables[0].value["legs"].iloc[0]
+    assert coupon_tables[0].value["EV"].iloc[0] > 0
+
+
+def test_connector_page_auto_coupon_section_prompts_for_missing_prerequisites():
+    at = _booted("connector")
+    assert any("Сначала обучите модель" in i.value for i in at.info)
+
+
+def test_connector_page_train_button_requires_keys():
+    at = _booted("connector")
+    at = _click(at, "Обучить и провалидировать модель (backtest)")
+    assert not at.exception
+    assert any("обязательны" in e.value for e in at.error)
+
+
+def test_connector_page_train_button_reports_error_on_insufficient_history(monkeypatch):
+    # only 3 historical records -- backtest_poisson_ratings raises "not enough
+    # matches"; the page must surface it via st.error, not crash.
+    tiny_history = {
+        "response": [
+            {"teams": {"home": "A", "away": "B"}, "score": {"home": 1, "away": 0}},
+            {"teams": {"home": "B", "away": "A"}, "score": {"home": 2, "away": 2}},
+            {"teams": {"home": "A", "away": "B"}, "score": {"home": 0, "away": 1}},
+        ]
+    }
+    monkeypatch.setattr(
+        "bukmeker.connectors.raw_source.requests.get",
+        _fake_get_by_path({"response": []}, tiny_history),
+    )
+    monkeypatch.setattr("anthropic.Anthropic", _FakeSchemaAwareAnthropicClient)
+
+    at = _booted("connector")
+    inputs = {ti.label: ti for ti in at.text_input}
+    inputs["Base URL провайдера"].set_value("https://provider.example.com")
+    inputs["API-ключ провайдера"].set_value("SRC_KEY")
+    inputs["Anthropic API-ключ"].set_value("ANTH_KEY")
+    at.run(timeout=30)
+
+    at = _click(at, "Обучить и провалидировать модель (backtest)")
+    assert not at.exception
+    assert any("Ошибка" in e.value for e in at.error)
+    assert "fitted_model" not in at.session_state
+
+
+def test_connector_page_train_button_warns_on_weak_model(monkeypatch):
+    # Fully random (coin-flip) results with no real team-strength signal ->
+    # the backtest's ROC-AUC should land near 0.5, triggering the warning.
+    import numpy as np
+
+    rng = np.random.default_rng(42)
+    teams = ["A", "B", "C", "D"]
+    records = []
+    for _ in range(400):
+        h, a = rng.choice(teams, size=2, replace=False)
+        records.append(
+            {
+                "teams": {"home": h, "away": a},
+                "score": {"home": int(rng.poisson(1.3)), "away": int(rng.poisson(1.3))},
+            }
+        )
+    monkeypatch.setattr(
+        "bukmeker.connectors.raw_source.requests.get",
+        _fake_get_by_path({"response": []}, {"response": records}),
+    )
+    monkeypatch.setattr("anthropic.Anthropic", _FakeSchemaAwareAnthropicClient)
+
+    at = _booted("connector")
+    inputs = {ti.label: ti for ti in at.text_input}
+    inputs["Base URL провайдера"].set_value("https://provider.example.com")
+    inputs["API-ключ провайдера"].set_value("SRC_KEY")
+    inputs["Anthropic API-ключ"].set_value("ANTH_KEY")
+    at.run(timeout=30)
+
+    at = _click(at, "Обучить и провалидировать модель (backtest)")
+    assert not at.exception
+    metrics = at.session_state["fitted_model_metrics"]
+    if metrics["roc_auc"] <= 0.55:
+        assert any("не показывает предсказательной силы" in w.value for w in at.warning)
+
+
+def test_connector_page_auto_coupon_reports_no_value_bets_found(monkeypatch):
+    # fixtures use team names the model was never trained on -> scan finds nothing
+    fixtures_payload = {
+        "response": [
+            {
+                "teams": {"home": "Totally Different FC", "away": "Also Unknown FC"},
+                "odds": {"home": "2.0", "draw": "3.0", "away": "4.0"},
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "bukmeker.connectors.raw_source.requests.get",
+        _fake_get_by_path(fixtures_payload, _synthetic_history_payload()),
+    )
+    monkeypatch.setattr("anthropic.Anthropic", _FakeSchemaAwareAnthropicClient)
+
+    at = _booted("connector")
+    inputs = {ti.label: ti for ti in at.text_input}
+    inputs["Base URL провайдера"].set_value("https://provider.example.com")
+    inputs["API-ключ провайдера"].set_value("SRC_KEY")
+    inputs["Anthropic API-ключ"].set_value("ANTH_KEY")
+    at.run(timeout=30)
+
+    at = _click(at, "Получить и нормализовать данные")
+    at = _click(at, "Обучить и провалидировать модель (backtest)")
+    at = _click(at, "🎯 Найти value bets и сгенерировать купоны")
+
+    assert not at.exception
+    assert any("не нашла ни одного исхода" in i.value for i in at.info)

@@ -11,24 +11,37 @@ import re
 
 from .schema import CANONICAL_FIELDS, FieldMapping
 
-_SYSTEM_PROMPT = (
-    "You are a data-mapping assistant for a sports-betting analytics platform. "
-    "You will be given one example JSON record from a sports-data API whose "
-    "schema you have never seen before. Map each of the following canonical "
-    "fields to a dotted path within that record: " + ", ".join(CANONICAL_FIELDS) + ". "
-    "Use dot notation for nested objects and integer indices for list access "
-    "(e.g. 'teams.home.name', 'odds.0.price'). If a field genuinely cannot be "
-    "found in the record, map it to null. Respond with ONLY a single JSON "
-    "object mapping canonical field name to dotted path string or null — no "
-    "prose, no markdown code fences."
-)
+
+def _build_system_prompt(target_fields: list[str]) -> str:
+    return (
+        "You are a data-mapping assistant for a sports-betting analytics platform. "
+        "You will be given one example JSON record from a sports-data API whose "
+        "schema you have never seen before. Map each of the following canonical "
+        "fields to a dotted path within that record: " + ", ".join(target_fields) + ". "
+        "Use dot notation for nested objects and integer indices for list access "
+        "(e.g. 'teams.home.name', 'odds.0.price'). If a field genuinely cannot be "
+        "found in the record, map it to null. Respond with ONLY a single JSON "
+        "object mapping canonical field name to dotted path string or null — no "
+        "prose, no markdown code fences."
+    )
 
 
 class ClaudeFieldMapper:
     """Real Anthropic API integration. Pass `client` to inject a fake/mock for
-    testing without making network calls or spending real API credits."""
+    testing without making network calls or spending real API credits.
 
-    def __init__(self, api_key: str | None = None, model: str = "claude-sonnet-5", client=None):
+    `target_fields` defaults to the future-fixtures/odds schema
+    (`schema.CANONICAL_FIELDS`); pass `connectors.historical.HISTORICAL_FIELDS`
+    to map historical results (final scores) instead -- the same LLM-mapping
+    mechanism works for either shape, only the field list changes."""
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str = "claude-sonnet-5",
+        client=None,
+        target_fields: list[str] | None = None,
+    ):
         if client is not None:
             self._client = client
         else:
@@ -36,12 +49,13 @@ class ClaudeFieldMapper:
 
             self._client = Anthropic(api_key=api_key)
         self.model = model
+        self.target_fields = target_fields or CANONICAL_FIELDS
 
     def infer_mapping(self, sample_record: dict) -> FieldMapping:
         message = self._client.messages.create(
             model=self.model,
             max_tokens=1024,
-            system=_SYSTEM_PROMPT,
+            system=_build_system_prompt(self.target_fields),
             messages=[{"role": "user", "content": json.dumps(sample_record)}],
         )
         if not message.content:

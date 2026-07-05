@@ -31,6 +31,11 @@ Postgres/Docker, реальные платежи) в этот пакет не в
 - **AI-коннектор данных**: подключите любой источник спортивных данных своим
   API-ключом — Anthropic API реально сопоставляет незнакомую JSON-схему
   провайдера с канонической схемой платформы.
+- **Реальный прогноз, а не только калькулятор**: обучение `PoissonStrength` на
+  реальной истории результатов, обязательный бэктест на отложенных данных
+  (ROC-AUC/ECE/Log Loss/Brier) до какого-либо использования, и автоматическое
+  сканирование предстоящих коэффициентов на value bets → готовый купон, без
+  единого вручную введённого числа (`bukmeker.backtest`, `bukmeker.live_predictions`).
 - **Веб-дашборд** (`bukmeker dashboard`): интерактивное приложение в браузере
   поверх той же математики — без командной строки и без чтения кода.
 
@@ -81,7 +86,7 @@ bukmeker/
       sync.py                — sync_registry_from_matches: слияние live-данных в реестр
     dashboard.py        — Streamlit-дашборд (все вкладки: спорт/купон/сущности)
     cli.py             — `bukmeker demo`, `bukmeker connector [--sync]`, `bukmeker dashboard`
-  tests/               — 187 unit-тестов; сетевые/AI-вызовы и дашборд протестированы
+  tests/               — 215 unit-тестов; сетевые/AI-вызовы и дашборд протестированы
                           через инжектируемые фейки и headless AppTest, без реальных
                           запросов, трат или браузера
   demo.py              — тонкая обёртка над bukmeker.cli.main(["demo"])
@@ -91,7 +96,7 @@ bukmeker/
 ## Запуск
 
 ```bash
-pytest tests/ -q        # 187 passed
+pytest tests/ -q        # 215 passed
 bukmeker demo             # сквозная синтетическая демонстрация (после pip install -e .)
 bukmeker dashboard         # веб-дашборд в браузере (http://localhost:8501)
 python demo.py             # то же самое без установки пакета
@@ -195,6 +200,47 @@ registry = build_seed_registry()
 report = sync_registry_from_matches(registry, matches, sport_id=1, fallback_country_id=usa_country_id)
 print(report.leagues_added, report.competitors_added)
 ```
+
+## Обучение модели, бэктест и автогенерация купонов
+
+Закрывает разрыв между "калькулятором EV/Kelly от вручную введённой вероятности"
+и настоящей прогнозной системой. Три шага, каждый — реальный код, не демонстрация:
+
+```python
+from bukmeker.connectors import AIDataConnector, ClaudeFieldMapper, RawDataSource
+from bukmeker.connectors.historical import HISTORICAL_FIELDS, apply_historical_mapping, to_rating_arrays
+from bukmeker.backtest import backtest_poisson_ratings
+from bukmeker.live_predictions import scan_fixtures_for_value
+from bukmeker.coupon import generate_coupons
+
+# 1) Реальная история результатов -> реальный рейтинг
+source = RawDataSource(base_url="https://api.provider.com", api_key="SOURCE_KEY")
+mapper = ClaudeFieldMapper(api_key="ANTHROPIC_KEY", target_fields=HISTORICAL_FIELDS)
+connector = AIDataConnector(source, mapper, apply_fn=apply_historical_mapping)
+historical_matches = connector.fetch_and_normalize("results")
+
+home_ids, away_ids, home_goals, away_goals, teams = to_rating_arrays(historical_matches)
+
+# 2) ОБЯЗАТЕЛЬНЫЙ бэктест ДО использования модели
+fitted, metrics = backtest_poisson_ratings(home_ids, away_ids, home_goals, away_goals, teams)
+print(metrics)  # log_loss, brier, roc_auc, ece, n_train, n_test
+assert metrics["roc_auc"] > 0.55, "модель не показывает предсказательной силы"
+
+# 3) Реальные предстоящие матчи + коэффициенты -> автоматически найденные value bets -> купон
+fixtures_mapper = ClaudeFieldMapper(api_key="ANTHROPIC_KEY")  # схема коэффициентов (по умолчанию)
+fixtures = AIDataConnector(source, fixtures_mapper).fetch_and_normalize("fixtures")
+
+candidates = scan_fixtures_for_value(fitted, fixtures, league_id=1, min_ev=0.0)
+coupons = generate_coupons(candidates, bankroll=10_000)
+```
+
+То же самое — в дашборде: страница **🔌 AI-коннектор** → разделы «📈 Обучение
+модели на истории результатов» (с явным предупреждением при слабом ROC-AUC) и
+«🤖 Автоматическая генерация купонов».
+
+**Честная граница**: успешный бэктест на истории — не гарантия будущей
+прибыли (рынки меняются, короткие серии определяются дисперсией сильнее,
+чем качеством модели) и реализовано пока только для футбола (`PoissonStrength`).
 
 ## Монетизация купона
 
