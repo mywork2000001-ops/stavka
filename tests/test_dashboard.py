@@ -8,6 +8,7 @@ and because file-based multipage navigation resolves page paths relative to
 whichever script AppTest was constructed from.
 """
 
+import json
 from pathlib import Path
 
 import pytest
@@ -61,21 +62,108 @@ def test_football_page_renders_probability_dataframe_and_metric():
     assert len(at.metric) == 1
 
 
-def test_coupon_page_generates_positive_ev_coupons_on_click():
+def test_football_page_shows_real_team_names_not_bare_sliders():
+    at = _booted("football")
+    subheaders = [s.value for s in at.subheader]
+    assert len(subheaders) == 1
+    home, _, away = subheaders[0].partition(" — ")
+    assert home and away and home != away
+    # the outcome chart/table must be labelled with the actual team names,
+    # not generic "home_win"/"away_win" keys
+    assert any(home in df.value["outcome"].values for df in at.dataframe)
+
+
+def test_basketball_page_shows_real_team_names():
+    at = _booted("basketball")
+    subheaders = [s.value for s in at.subheader]
+    assert len(subheaders) == 1
+    home, _, away = subheaders[0].partition(" — ")
+    assert home and away and home != away
+
+
+def test_tennis_page_shows_real_player_names():
+    at = _booted("tennis")
+    subheaders = [s.value for s in at.subheader]
+    assert len(subheaders) == 1
+    p1, _, p2 = subheaders[0].partition(" — ")
+    assert p1 and p2 and p1 != p2
+
+
+def test_coupon_page_shows_team_id_reference_table():
     at = _booted("coupon")
-    at = at.button[0].click().run(timeout=30)
+    reference = next(df for df in at.dataframe if list(df.value.columns) == ["ID", "Название", "Лига"])
+    assert "Arsenal" in reference.value["Название"].values
+
+
+def test_coupon_page_analysis_builder_shows_real_teams_and_computed_ev():
+    at = _booted("coupon")
+    selectboxes = {sb.label: sb for sb in at.selectbox}
+    assert selectboxes["Дома"].value == "Arsenal"
+    assert selectboxes["В гостях"].value == "Chelsea"
+
+    analysis_table = next(
+        df for df in at.dataframe if list(df.value.columns) == ["Исход", "p_model", "odds", "EV"]
+    )
+    assert "Arsenal" in analysis_table.value["Исход"].values
+
+
+def test_coupon_page_add_leg_button_appends_a_real_analyzed_bet():
+    at = _booted("coupon")
+    at = _click(at, "➕ Добавить в купон")
+    assert not at.exception
+    assert len(at.success) == 1
+
+    legs = at.session_state["coupon_legs"]
+    assert len(legs) == 1
+    assert 0.0 <= legs[0].prob <= 1.0
+    assert legs[0].team_ids == (1, 2)  # Arsenal, Chelsea
+
+
+def test_coupon_page_records_match_time_for_added_leg():
+    import datetime
+
+    at = _booted("coupon")
+    assert len(at.datetime_input) == 1
+
+    at = _click(at, "➕ Добавить в купон")
     assert not at.exception
 
-    # AppTest exposes both st.data_editor (the input rows) and st.dataframe
-    # (the resulting coupons) under `.dataframe` -- the coupons table is the
-    # one with an "EV" column.
-    coupons_table = next(df for df in at.dataframe if "EV" in df.value.columns)
+    leg_times = at.session_state["_coupon_leg_times"]
+    assert isinstance(leg_times[1], datetime.datetime)
+
+    legs_table = next(df for df in at.dataframe if "Время матча" in df.value.columns)
+    assert legs_table.value["Время матча"].iloc[0] != "—"
+
+
+def test_coupon_page_generate_includes_analysis_leg_alongside_manual_rows():
+    at = _booted("coupon")
+    at = _click(at, "➕ Добавить в купон")
+    at = _click(at, "Сгенерировать купоны")
+    assert not at.exception
+
+    coupons_table = next(df for df in at.dataframe if "joint_odds" in df.value.columns)
+    all_legs = ", ".join(coupons_table.value["legs"])
+    assert "#1" in all_legs  # the analysis-added leg (bet_id=1) appears in at least one coupon
+
+
+def _click(at, label):
+    return {b.label: b for b in at.button}[label].click().run(timeout=30)
+
+
+def test_coupon_page_generates_positive_ev_coupons_on_click():
+    at = _booted("coupon")
+    at = _click(at, "Сгенерировать купоны")
+    assert not at.exception
+
+    # Both the analysis section's outcome table and the final coupons table
+    # have an "EV" column -- match on "joint_odds", unique to the latter.
+    coupons_table = next(df for df in at.dataframe if "joint_odds" in df.value.columns)
     assert all(ev > 0 for ev in coupons_table.value["EV"])
 
 
 def test_coupon_page_monetization_metrics_match_worked_example():
     at = _booted("coupon")
-    at = at.button[0].click().run(timeout=30)
+    at = _click(at, "Сгенерировать купоны")
 
     metrics = {m.label: m.value for m in at.metric}
     assert metrics["Общий коэффициент"] == "5.70"
@@ -127,3 +215,106 @@ def test_help_page_contains_glossary_terms():
     all_text = " ".join(m.value for m in at.markdown)
     for term in ("EV", "Kelly", "Overround", "λ", "ρ"):
         assert term in all_text, f"glossary should mention {term!r}"
+
+
+class _FakeContentBlock:
+    def __init__(self, text):
+        self.text = text
+
+
+class _FakeAnthropicMessage:
+    def __init__(self, text):
+        self.content = [_FakeContentBlock(text)]
+
+
+class _FakeAnthropicMessagesResource:
+    def __init__(self, response_text):
+        self._response_text = response_text
+
+    def create(self, **kwargs):
+        return _FakeAnthropicMessage(self._response_text)
+
+
+class _FakeAnthropicClient:
+    def __init__(self, api_key=None):
+        self.messages = _FakeAnthropicMessagesResource(
+            json.dumps(
+                {
+                    "match_id": "fixture.id",
+                    "sport": None,
+                    "league": "league.name",
+                    "home_team": "teams.home.name",
+                    "away_team": "teams.away.name",
+                    "start_time": None,
+                    "home_odds": None,
+                    "draw_odds": None,
+                    "away_odds": None,
+                }
+            )
+        )
+
+
+def test_connector_page_requires_all_three_keys_before_fetching():
+    at = _booted("connector")
+    at.button[0].click().run(timeout=30)
+    assert not at.exception
+    assert len(at.error) == 1
+    assert "обязательны" in at.error[0].value
+
+
+def test_connector_page_fetches_and_normalizes_with_mocked_source_and_ai(monkeypatch):
+    def fake_get(url, headers=None, params=None, timeout=None):
+        class _Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "response": [
+                        {
+                            "fixture": {"id": 1},
+                            "league": {"name": "Test League"},
+                            "teams": {"home": {"name": "Sync FC"}, "away": {"name": "Merge United"}},
+                        }
+                    ]
+                }
+
+        return _Resp()
+
+    monkeypatch.setattr("bukmeker.connectors.raw_source.requests.get", fake_get)
+    monkeypatch.setattr("anthropic.Anthropic", _FakeAnthropicClient)
+
+    at = _booted("connector")
+    inputs = {ti.label: ti for ti in at.text_input}
+    inputs["Base URL провайдера"].set_value("https://provider.example.com")
+    inputs["API-ключ провайдера"].set_value("SRC_KEY")
+    inputs["Anthropic API-ключ"].set_value("ANTH_KEY")
+    at.run(timeout=30)
+
+    at.button[0].click().run(timeout=30)
+    assert not at.exception
+    assert len(at.success) == 1
+    dataframes = at.dataframe
+    match_df = next(df for df in dataframes if "home_team" in df.value.columns)
+    assert "Sync FC" in match_df.value["home_team"].values
+
+
+def test_connector_page_redacts_api_key_from_error_message(monkeypatch):
+    def fake_get(url, headers=None, params=None, timeout=None):
+        raise RuntimeError(f"connection failed for {url}?apiKey=SUPERSECRET123")
+
+    monkeypatch.setattr("bukmeker.connectors.raw_source.requests.get", fake_get)
+    monkeypatch.setattr("anthropic.Anthropic", _FakeAnthropicClient)
+
+    at = _booted("connector")
+    inputs = {ti.label: ti for ti in at.text_input}
+    inputs["Base URL провайдера"].set_value("https://provider.example.com")
+    inputs["API-ключ провайдера"].set_value("SUPERSECRET123")
+    inputs["Anthropic API-ключ"].set_value("ANTH_KEY")
+    at.run(timeout=30)
+
+    at.button[0].click().run(timeout=30)
+    assert not at.exception
+    assert len(at.error) == 1
+    assert "SUPERSECRET123" not in at.error[0].value
+    assert "***" in at.error[0].value
