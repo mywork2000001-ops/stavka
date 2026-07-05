@@ -92,3 +92,32 @@ def test_outcome_probs_home_win_when_row_index_exceeds_col():
     assert result["home_win"] == pytest.approx(1.0)
     assert result["draw"] == pytest.approx(0.0)
     assert result["away_win"] == pytest.approx(0.0)
+
+
+def test_negative_lambda_rejected_instead_of_silently_producing_nan():
+    # Previously a negative lambda propagated as NaN through every downstream
+    # probability instead of raising -- e.g. from a buggy upstream rating calc.
+    with pytest.raises(ValueError):
+        poisson_pmf(2, -1.0)
+    with pytest.raises(ValueError):
+        poisson_matrix(-1.0, 1.0)
+    with pytest.raises(ValueError):
+        bivariate_poisson_matrix(1.0, 1.0, lambda3=-0.1)
+    with pytest.raises(ValueError):
+        dixon_coles_matrix(-1.0, 1.0, rho=0.0)
+    with pytest.raises(ValueError):
+        skellam_probs(-1.0, 1.0)
+    with pytest.raises(ValueError):
+        monte_carlo_outcome_probs(-1.0, 1.0, n_sim=10)
+
+
+def test_zero_lambda_is_a_valid_degenerate_case():
+    # lambda=0 is a legitimate (if extreme) Poisson(0) -- must NOT raise.
+    m = poisson_matrix(0.0, 1.0, max_goals=20)
+    assert m.sum() == pytest.approx(1.0, abs=1e-6)
+    assert m[0, :].sum() == pytest.approx(1.0)  # home always scores 0
+
+
+def test_negative_binomial_rejects_nonpositive_dispersion():
+    with pytest.raises(ValueError):
+        negative_binomial_pmf(np.arange(5), mu=1.0, dispersion=0.0)

@@ -11,13 +11,21 @@ import numpy as np
 from scipy.stats import nbinom, poisson, skellam
 
 
+def _validate_lambda(name: str, value: float) -> None:
+    if value < 0:
+        raise ValueError(f"{name} must be >= 0, got {value}")
+
+
 def poisson_pmf(k: int, lam: float) -> float:
     """P(X=k) = lambda^k * e^(-lambda) / k!"""
+    _validate_lambda("lam", lam)
     return float(poisson.pmf(k, lam))
 
 
 def poisson_matrix(home_lambda: float, away_lambda: float, max_goals: int = 10) -> np.ndarray:
     """Independent-Poisson joint score matrix, matrix[i, j] = P(home=i, away=j)."""
+    _validate_lambda("home_lambda", home_lambda)
+    _validate_lambda("away_lambda", away_lambda)
     home_probs = poisson.pmf(np.arange(max_goals + 1), home_lambda)
     away_probs = poisson.pmf(np.arange(max_goals + 1), away_lambda)
     return np.outer(home_probs, away_probs)
@@ -28,6 +36,9 @@ def bivariate_poisson_matrix(
 ) -> np.ndarray:
     """Karlis & Ntzoufras bivariate Poisson: X = Z1+Z3, Y = Z2+Z3, Z3 the shared
     covariance component capturing correlation between home/away goals."""
+    _validate_lambda("home_lambda", home_lambda)
+    _validate_lambda("away_lambda", away_lambda)
+    _validate_lambda("lambda3", lambda3)
     l1, l2, l3 = home_lambda, away_lambda, lambda3
     n = max_goals + 1
     matrix = np.zeros((n, n))
@@ -77,6 +88,9 @@ def negative_binomial_pmf(k: np.ndarray, mu: float, dispersion: float) -> np.nda
     """NB parametrised by mean `mu` and dispersion `dispersion` (= r, the size
     parameter); variance = mu + mu^2/dispersion. Models goal-count overdispersion
     that plain Poisson (mean=variance) cannot capture."""
+    _validate_lambda("mu", mu)
+    if dispersion <= 0:
+        raise ValueError(f"dispersion must be > 0, got {dispersion}")
     p = dispersion / (dispersion + mu)
     return nbinom.pmf(k, dispersion, p)
 
@@ -84,6 +98,8 @@ def negative_binomial_pmf(k: np.ndarray, mu: float, dispersion: float) -> np.nda
 def skellam_probs(home_lambda: float, away_lambda: float) -> dict:
     """Exact P(home win / draw / away win) from the Skellam distribution of the
     goal difference X-Y, independent of building a full score matrix."""
+    _validate_lambda("home_lambda", home_lambda)
+    _validate_lambda("away_lambda", away_lambda)
     home_win = 1.0 - skellam.cdf(0, home_lambda, away_lambda)
     draw = skellam.pmf(0, home_lambda, away_lambda)
     away_win = skellam.cdf(-1, home_lambda, away_lambda)
@@ -94,6 +110,8 @@ def monte_carlo_outcome_probs(
     home_lambda: float, away_lambda: float, n_sim: int = 100_000, seed: int | None = None
 ) -> dict:
     """Simulate n_sim independent matches and return empirical outcome frequencies."""
+    _validate_lambda("home_lambda", home_lambda)
+    _validate_lambda("away_lambda", away_lambda)
     rng = np.random.default_rng(seed)
     home_goals = rng.poisson(lam=home_lambda, size=n_sim)
     away_goals = rng.poisson(lam=away_lambda, size=n_sim)
