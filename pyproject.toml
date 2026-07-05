@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bukmeker"
+version = "0.1.0"
+description = "Value Betting Research Platform — mathematical core (ratings, goal models, margin removal, calibration, value detection, bankroll & coupon generation)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Bukmeker Project" }]
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "scikit-learn>=1.3",
+    "pandas>=2.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "ruff>=0.6"]
+
+[project.scripts]
+bukmeker = "bukmeker.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["bukmeker*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
